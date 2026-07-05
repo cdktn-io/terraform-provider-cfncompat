@@ -1,0 +1,6 @@
+[tools]
+go = "1.25.8"
+terraform = "latest"
+golangci-lint = "latest"
+actionlint = "latest"
+zizmor = "latest"
