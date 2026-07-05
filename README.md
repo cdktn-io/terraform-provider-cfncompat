@@ -21,6 +21,7 @@ The `cfncompat` provider fills this gap by exposing CloudFormation intrinsic fun
 | `cfncompat::select` | Provider Function | `provider::cfncompat::select(...)` | `Fn::Select` |
 | `cfncompat::find_in_map` | Provider Function | `provider::cfncompat::find_in_map(...)` | `Fn::FindInMap` |
 | `cfncompat::base64` | Provider Function | `provider::cfncompat::base64(...)` | `Fn::Base64` |
+| ... | Provider Function | ... | every cfn function |
 | `cfncompat_custom_resource` | Resource | `resource "cfncompat_custom_resource"` | `AWS::CloudFormation::CustomResource` |
 
 Placeholder skeleton files exist in `internal/provider/` for the highest-priority functions (`cidr`, `join`) and the custom resource.
@@ -33,7 +34,7 @@ Placeholder skeleton files exist in `internal/provider/` for the highest-priorit
 ## Building the Provider
 
 ```shell
-git clone https://github.com/sakul-learning/terraform-provider-cfncompat.git
+git clone https://github.com/cdktn-io/terraform-provider-cfncompat.git
 cd terraform-provider-cfncompat
 go install
 ```
@@ -44,7 +45,7 @@ go install
 terraform {
   required_providers {
     cfncompat = {
-      source = "registry.terraform.io/cdktn/cfncompat"
+      source = "registry.terraform.io/cdktn-io/cfncompat"
     }
   }
 }
@@ -69,8 +70,8 @@ make generate
 
 ## Provider Source
 
-- **Registry address:** `registry.terraform.io/cdktn/cfncompat`
-- **Repository:** `github.com/sakul-learning/terraform-provider-cfncompat`
+- **Registry address:** `registry.terraform.io/cdktn-io/cfncompat`
+- **Repository:** `github.com/cdktn-io/terraform-provider-cfncompat`
 
 ## License
 

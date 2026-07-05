@@ -1,4 +1,4 @@
-module github.com/sakul-learning/terraform-provider-cfncompat
+module github.com/cdktn-io/terraform-provider-cfncompat
 
 go 1.25.8
 

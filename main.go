@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2021, 2025
+// Copyright (c) 2026 cdktn-io
 // SPDX-License-Identifier: MPL-2.0
 
 package main
@@ -8,8 +8,8 @@ import (
 	"flag"
 	"log"
 
+	"github.com/cdktn-io/terraform-provider-cfncompat/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/sakul-learning/terraform-provider-cfncompat/internal/provider"
 )
 
 var (
@@ -28,10 +28,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		// TODO: Update this string with the published name of your provider.
-		// Also update the tfplugindocs generate command to either remove the
-		// -provider-name flag or set its value to the updated provider name.
-		Address: "registry.terraform.io/cdktn/cfncompat",
+		Address: "registry.terraform.io/cdktn-io/cfncompat",
 		Debug:   debug,
 	}
 
