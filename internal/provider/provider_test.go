@@ -1,4 +1,4 @@
-// Copyright (c) 2025 sakul-learning
+// Copyright (c) 2026 cdktn-io
 // SPDX-License-Identifier: MPL-2.0
 
 package provider
@@ -14,10 +14,13 @@ import (
 // acceptance testing. The factory function is called for each Terraform CLI
 // command to create a provider server that the CLI can connect to and interact
 // with.
+//
+//nolint:unused // reserved for acceptance tests added alongside the first resource/function implementations
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"cfncompat": providerserver.NewProtocol6WithError(New("test")()),
 }
 
+//nolint:unused // reserved for acceptance tests added alongside the first resource/function implementations
 func testAccPreCheck(t *testing.T) {
 	// You can add code here to run prior to any test case execution, for
 	// example assertions about the appropriate environment variables being set

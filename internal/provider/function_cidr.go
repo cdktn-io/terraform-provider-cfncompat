@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Copyright (c) 2025 sakul-learning
+// Copyright (c) 2026 cdktn-io
 // SPDX-License-Identifier: MPL-2.0
 
 // PLACEHOLDER: Future provider-defined function provider::cfncompat::cidr
