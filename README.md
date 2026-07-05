@@ -10,7 +10,17 @@ The `cfncompat` provider fills this gap by exposing CloudFormation intrinsic fun
 
 ## Status
 
-🚧 **Early development** — all pure-computable CloudFormation intrinsic functions are implemented as provider-defined functions. Deployment-model resources (`cfncompat_custom_resource`) are not implemented yet.
+🚧 **Early development** — all pure-computable CloudFormation intrinsic functions are implemented as provider-defined functions, and the CloudFormation custom-resource protocol is implemented as the `cfncompat_custom_resource` resource.
+
+### Resources (implemented)
+
+| Feature | Terraform Form | CloudFormation Equivalent |
+|---|---|---|
+| Custom resource protocol | `resource "cfncompat_custom_resource"` | `AWS::CloudFormation::CustomResource` / `Custom::*` |
+
+`cfncompat_custom_resource` emulates the CloudFormation engine's side of the [custom resource protocol](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref.html): it delivers Create/Update/Delete events to Lambda or SNS service tokens and polls a pre-signed S3 `ResponseURL` for the handler response — so existing CloudFormation custom-resource handlers (including CDK's provider framework and `AwsCustomResource`) work unmodified. Requires AWS credentials (see provider configuration) and a response bucket (`custom_resource_bucket` provider attribute or per-resource `response_bucket`). See [`RFCs/005-custom-resource-polyfill.md`](RFCs/005-custom-resource-polyfill.md) for the design.
+
+Provider AWS configuration follows the terraform-provider-awscc schema (static credentials, profile, shared config files, `assume_role`, `assume_role_with_web_identity`, endpoint overrides) and is fully optional: provider functions never need it.
 
 ### Provider Functions (implemented)
 
@@ -51,11 +61,10 @@ Terraform provider-defined functions must be pure and offline, so intrinsics nee
 
 ### Planned Features
 
-| Feature | Type | Terraform Form | CloudFormation Equivalent |
-|---|---|---|---|
-| `cfncompat_custom_resource` | Resource | `resource "cfncompat_custom_resource"` | `AWS::CloudFormation::CustomResource` |
-
-A placeholder skeleton file exists in `internal/provider/` for the custom resource.
+| Feature | Type | Notes |
+|---|---|---|
+| `cfncompat_aws_sdk_call` | Resource | Native arbitrary-SDK-call resource (removes `AwsCustomResource`'s runtime-Lambda dependency) — deferred, see RFC 005 |
+| `cfncompat_signal` | Resource | `cfn-signal`/`CreationPolicy` analog (SQS long-poll blueprint from RFC 002 §7.1) — deferred |
 
 ## Requirements
 
