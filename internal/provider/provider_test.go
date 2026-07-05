@@ -4,6 +4,9 @@
 package provider
 
 import (
+	"os"
+	"testing"
+
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )
@@ -14,4 +17,18 @@ import (
 // with.
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"cfncompat": providerserver.NewProtocol6WithError(New("test")()),
+}
+
+// testAccPreCheck validates that TF_ACC is set, skipping the test otherwise
+// (terraform-plugin-testing's resource.Test/UnitTest already do this, but
+// tests that build their own acceptance scaffolding, like
+// TestAccCustomResource, call this directly). Individual acceptance tests
+// may layer additional environment variable requirements (e.g.
+// CFNCOMPAT_TEST_LAMBDA_ARN) on top of this.
+func testAccPreCheck(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv("TF_ACC") == "" {
+		t.Skip("acceptance tests are skipped unless TF_ACC is set")
+	}
 }

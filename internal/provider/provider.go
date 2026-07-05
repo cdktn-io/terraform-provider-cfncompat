@@ -287,10 +287,10 @@ func (p *CfncompatProvider) Configure(ctx context.Context, req provider.Configur
 }
 
 // Resources returns the resources supported by this provider.
-// Currently none; future resources will include:
-//   - cfncompat_custom_resource
 func (p *CfncompatProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return nil
+	return []func() resource.Resource{
+		NewCustomResource,
+	}
 }
 
 // EphemeralResources returns the ephemeral resources supported by this provider.
