@@ -1,3 +1,1 @@
-provider "cfncompat" {
-  # example configuration here
-}
+provider "cfncompat" {}

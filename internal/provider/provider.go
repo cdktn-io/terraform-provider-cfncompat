@@ -13,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 // Ensure CfncompatProvider satisfies various provider interfaces.
@@ -30,11 +29,6 @@ type CfncompatProvider struct {
 	version string
 }
 
-// CfncompatProviderModel describes the provider data model.
-type CfncompatProviderModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
-}
-
 func (p *CfncompatProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "cfncompat"
 	resp.Version = p.version
@@ -42,26 +36,19 @@ func (p *CfncompatProvider) Metadata(ctx context.Context, req provider.MetadataR
 
 func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Attributes: map[string]schema.Attribute{
-			"endpoint": schema.StringAttribute{
-				MarkdownDescription: "Example provider attribute",
-				Optional:            true,
-			},
-		},
+		Description: "The cfncompat provider exposes AWS CloudFormation intrinsic functions " +
+			"(Fn::Cidr, Fn::Join, Fn::Select, Fn::FindInMap, condition functions, and more) as Terraform " +
+			"provider-defined functions (provider::cfncompat::*), giving CDK Terrain's Terraform/OpenTofu " +
+			"synthesis backend faithful CloudFormation compatibility semantics. It requires no configuration.",
+		MarkdownDescription: "The `cfncompat` provider exposes AWS CloudFormation intrinsic functions " +
+			"(`Fn::Cidr`, `Fn::Join`, `Fn::Select`, `Fn::FindInMap`, condition functions, and more) as Terraform " +
+			"provider-defined functions (`provider::cfncompat::*`), giving CDK Terrain's Terraform/OpenTofu " +
+			"synthesis backend faithful CloudFormation compatibility semantics. It requires no configuration.\n\n" +
+			"See [CDK Terrain](https://github.com/open-constructs/cdk-terrain) for the synthesis backend this provider supports.",
 	}
 }
 
 func (p *CfncompatProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	var data CfncompatProviderModel
-
-	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
 }
 
 // Resources returns the resources supported by this provider.
