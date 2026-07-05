@@ -86,10 +86,14 @@ func (p *CfncompatProvider) DataSources(ctx context.Context) []func() datasource
 func (p *CfncompatProvider) Functions(ctx context.Context) []func() function.Function {
 	return []func() function.Function{
 		NewBase64Function,
+		NewCidrFunction,
+		NewFindInMapFunction,
 		NewJoinFunction,
+		NewLengthFunction,
 		NewSelectFunction,
 		NewSplitFunction,
 		NewSubFunction,
+		NewToJsonStringFunction,
 	}
 }
 
