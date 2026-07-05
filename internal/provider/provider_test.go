@@ -4,8 +4,6 @@
 package provider
 
 import (
-	"testing"
-
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )
@@ -16,11 +14,4 @@ import (
 // with.
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"cfncompat": providerserver.NewProtocol6WithError(New("test")()),
-}
-
-//nolint:unused // reserved for acceptance tests added alongside the first resource/function implementations
-func testAccPreCheck(t *testing.T) {
-	// You can add code here to run prior to any test case execution, for
-	// example assertions about the appropriate environment variables being set
-	// are common to see in a pre-check function.
 }
