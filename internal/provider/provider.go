@@ -81,12 +81,16 @@ func (p *CfncompatProvider) DataSources(ctx context.Context) []func() datasource
 	return nil
 }
 
-// Functions returns the provider-defined functions.
-// Currently none; future functions will include:
-//   - provider::cfncompat::cidr
-//   - provider::cfncompat::join
+// Functions returns the provider-defined functions, each implementing the
+// CloudFormation intrinsic function of the same name.
 func (p *CfncompatProvider) Functions(ctx context.Context) []func() function.Function {
-	return nil
+	return []func() function.Function{
+		NewBase64Function,
+		NewJoinFunction,
+		NewSelectFunction,
+		NewSplitFunction,
+		NewSubFunction,
+	}
 }
 
 // Actions returns the provider actions.

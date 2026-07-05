@@ -14,8 +14,6 @@ import (
 // acceptance testing. The factory function is called for each Terraform CLI
 // command to create a provider server that the CLI can connect to and interact
 // with.
-//
-//nolint:unused // reserved for acceptance tests added alongside the first resource/function implementations
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"cfncompat": providerserver.NewProtocol6WithError(New("test")()),
 }
