@@ -92,7 +92,7 @@ func TestBase64Function(t *testing.T) {
 // TestAccBase64Function verifies the cfncompat::base64 provider-defined
 // function end-to-end against a real Terraform CLI. Gated by TF_ACC=1.
 func TestAccBase64Function(t *testing.T) {
-	resource.UnitTest(t, resource.TestCase{
+	resource.Test(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
 			tfversion.SkipBelow(tfversion.Version1_8_0),
 		},

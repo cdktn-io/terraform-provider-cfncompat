@@ -151,7 +151,7 @@ func TestSplitFunction(t *testing.T) {
 // through real Terraform CLI runs. It is not run by this agent (the function is not
 // yet registered in provider.go); it is run centrally after registration.
 func TestAccSplitFunction(t *testing.T) {
-	resource.UnitTest(t, resource.TestCase{
+	resource.Test(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
 			tfversion.SkipBelow(tfversion.Version1_8_0),
 		},

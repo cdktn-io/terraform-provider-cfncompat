@@ -208,7 +208,7 @@ func TestSubFunction(t *testing.T) {
 }
 
 func TestAccSubFunction(t *testing.T) {
-	resource.UnitTest(t, resource.TestCase{
+	resource.Test(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
 			tfversion.SkipBelow(tfversion.Version1_8_0),
 		},

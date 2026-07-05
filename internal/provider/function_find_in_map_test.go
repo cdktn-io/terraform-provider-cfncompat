@@ -358,7 +358,7 @@ func TestFindInMapFunction(t *testing.T) {
 // gated by TF_ACC=1 and is not run as part of `make test`; it is registered
 // here for the batch acceptance run after provider.go wiring.
 func TestAccFindInMapFunction(t *testing.T) {
-	resource.UnitTest(t, resource.TestCase{
+	resource.Test(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
 			tfversion.SkipBelow(tfversion.Version1_8_0),
 		},

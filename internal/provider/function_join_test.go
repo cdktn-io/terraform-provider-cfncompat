@@ -145,7 +145,7 @@ func TestJoinFunction(t *testing.T) {
 // part of `make test`; it is registered here for the batch acceptance run
 // after provider.go wiring.
 func TestAccJoinFunction(t *testing.T) {
-	resource.UnitTest(t, resource.TestCase{
+	resource.Test(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
 			tfversion.SkipBelow(tfversion.Version1_8_0),
 		},
