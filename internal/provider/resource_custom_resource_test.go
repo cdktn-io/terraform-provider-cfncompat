@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	rtresource "github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 // customResourceTestSchema returns the cfncompat_custom_resource schema.
@@ -727,26 +728,66 @@ func TestCustomResourceServiceTimeoutValidator(t *testing.T) {
 // TestAccCustomResource is gated on TF_ACC plus two additional environment
 // variables, since it exercises real AWS Lambda + S3. Skips otherwise.
 //
-// Required handler behavior for CFNCOMPAT_TEST_LAMBDA_ARN: this provider
-// polls S3 directly rather than the ResponseURL, so the Lambda function
-// must decode the incoming event and PUT its JSON response object
-// (matching the crResponse shape: Status, Reason, PhysicalResourceId,
-// StackId, RequestId, LogicalResourceId, NoEcho, Data) to
-// "cfncompat/<RequestId>.json" under CFNCOMPAT_TEST_RESPONSE_BUCKET. A
-// minimal handler responds SUCCESS with a fixed PhysicalResourceId for any
-// RequestType.
+// Required handler behavior for CFNCOMPAT_TEST_LAMBDA_ARN: a completely
+// standard CloudFormation custom-resource handler — it receives the CFN
+// event and PUTs its JSON response (Status, Reason, PhysicalResourceId,
+// StackId, RequestId, LogicalResourceId, Data) to event.ResponseURL (a
+// pre-signed S3 URL under CFNCOMPAT_TEST_RESPONSE_BUCKET). The test
+// expects the handler to respond SUCCESS and echo
+// ResourceProperties.Greeting back as Data.Echo.
+//
+// AWS credentials/region come from the environment (e.g. via
+// aws-vault exec). See RFCs/005-custom-resource-polyfill.md.
 func TestAccCustomResource(t *testing.T) {
-	testAccPreCheck(t)
-
 	lambdaARN := os.Getenv("CFNCOMPAT_TEST_LAMBDA_ARN")
 	responseBucket := os.Getenv("CFNCOMPAT_TEST_RESPONSE_BUCKET")
 	if lambdaARN == "" || responseBucket == "" {
 		t.Skip("set CFNCOMPAT_TEST_LAMBDA_ARN and CFNCOMPAT_TEST_RESPONSE_BUCKET to run this acceptance test")
 	}
 
-	// The full apply/update/destroy cycle against real AWS Lambda/S3 runs
-	// centrally alongside the other acceptance tests once this resource is
-	// registered in provider.go; this test only validates that the required
-	// environment is present and documents the handler contract above.
-	t.Log("cfncompat_custom_resource acceptance environment detected; full apply/destroy cycle runs centrally after registration")
+	config := func(greeting string) string {
+		return `
+provider "cfncompat" {
+  custom_resource_bucket = "` + responseBucket + `"
+}
+
+resource "cfncompat_custom_resource" "test" {
+  service_token       = "` + lambdaARN + `"
+  resource_type       = "Custom::CfncompatAccTest"
+  logical_resource_id = "CfncompatAccTestResource"
+  service_timeout     = 120
+
+  resource_properties = {
+    Greeting = "` + greeting + `"
+  }
+}
+
+output "echo" {
+  value = cfncompat_custom_resource.test.data.Echo
+}
+`
+	}
+
+	rtresource.Test(t, rtresource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []rtresource.TestStep{
+			{
+				// Create.
+				Config: config("hello"),
+				Check: rtresource.ComposeAggregateTestCheckFunc(
+					rtresource.TestCheckResourceAttrSet("cfncompat_custom_resource.test", "physical_resource_id"),
+					rtresource.TestCheckOutput("echo", "hello"),
+				),
+			},
+			{
+				// Update in place (same physical id from the echo handler).
+				Config: config("updated"),
+				Check: rtresource.ComposeAggregateTestCheckFunc(
+					rtresource.TestCheckResourceAttrSet("cfncompat_custom_resource.test", "physical_resource_id"),
+					rtresource.TestCheckOutput("echo", "updated"),
+				),
+			},
+			// Destroy (Delete event) runs automatically at the end.
+		},
+	})
 }
