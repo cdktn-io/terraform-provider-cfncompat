@@ -1,0 +1,12 @@
+tf/
+.build/
+
+# Safety net: SKIP_<stage>=true local-dev runs (see README.md) reuse
+# fixtures/ in place instead of a tf/ copy, so Terraform/terratest state can
+# land there too.
+fixtures/**/.terraform/
+fixtures/**/.terraform.lock.hcl
+fixtures/**/.test-data/
+fixtures/**/terraform.tfstate
+fixtures/**/terraform.tfstate.backup
+fixtures/**/*.zip
