@@ -1,66 +1,119 @@
-# RFC-006: Backend-Neutral Synthesis Architecture
+# RFC-006: Backend-Neutral Synthesis Architecture (Revised)
 
 **Status:** Proposed (Future Work)
 
-## Summary
+> **Note:** This RFC describes a possible long-term evolution of the AWS
+> CDK synthesis architecture. It is **not** a prerequisite for Terraform
+> compatibility. The current compatibility work continues to target the
+> existing synthesis pipeline with minimal changes to the AWS CDK
+> codebase.
 
-This RFC proposes a future evolution of the AWS CDK synthesis
-architecture to introduce a backend-neutral Intermediate Representation
-(IR).
+------------------------------------------------------------------------
 
-The current implementation strategy intentionally preserves the existing
-AWS CDK synthesis pipeline, minimizing changes to the AWS CDK codebase
-while enabling Terraform as an alternative deployment target.
+# Summary
 
-Once Terraform support has proven the viability of the compatibility
-approach, the synthesis pipeline can be generalized by introducing a
-backend-neutral semantic representation that decouples the CDK
-programming model from any specific Infrastructure-as-Code backend.
+This RFC proposes evolving the AWS CDK synthesis pipeline toward a
+backend-neutral architecture by introducing an **internal Intermediate
+Representation (IR)** between the construct tree and backend
+serializers.
 
-This RFC is **not a prerequisite** for Terraform support. Instead, it
-describes a possible evolution of the AWS CDK architecture after
-Terraform compatibility has reached production maturity.
+Unlike the shared Infrastructure Intermediate Representation (IIR)
+proposed in **Planning RFC-06**, the AWS CDK IR remains an **internal
+implementation detail**. It is not exposed as a public API and is free
+to evolve alongside the AWS CDK implementation.
 
-## Motivation
+To maximize interoperability across construct ecosystems, the internal
+AWS CDK IR **MUST extend and remain compatible with the public
+Infrastructure Intermediate Representation (IIR)** defined in Planning
+RFC-06. Backend-neutral concepts are inherited from the shared IIR,
+while AWS CDK may introduce additional internal semantic information
+required by its synthesis pipeline.
 
-The current AWS CDK architecture assumes CloudFormation as its synthesis
-target.
+This approach preserves the existing AWS CDK programming model while
+allowing CloudFormation and Terraform to become peer synthesis backends.
 
-Although this assumption has served the project well, it couples several
-synthesis concepts directly to CloudFormation constructs, including
-intrinsic functions, references, conditions, outputs, dependencies, and
-deployment semantics.
+------------------------------------------------------------------------
 
-Terraform support demonstrates that many of these concepts are actually
-higher-level infrastructure semantics rather than
-CloudFormation-specific behavior.
+# Motivation
 
-Introducing an Intermediate Representation allows these semantics to be
-represented independently from the final deployment backend.
+Today, the AWS CDK assumes CloudFormation as its synthesis target. This
+assumption is reflected throughout the synthesis pipeline, where
+semantic concepts such as references, intrinsic functions, conditions,
+outputs and deployment semantics are represented directly using
+CloudFormation constructs.
 
-## Goals
+While this architecture has served AWS CDK extremely well, it makes
+introducing alternative deployment backends more difficult because
+backend-specific concepts become intertwined with semantic
+infrastructure modeling.
+
+The Terraform compatibility effort demonstrates that most construct
+semantics are independent of CloudFormation. Resources, references,
+dependencies, expressions and assets all exist before a CloudFormation
+template is produced. Only the final serialization step requires
+backend-specific knowledge.
+
+Separating semantic synthesis from backend serialization improves
+modularity, testability and extensibility without changing the construct
+programming model.
+
+------------------------------------------------------------------------
+
+# Background
+
+Planning RFC-06 introduces a **Shared Infrastructure Intermediate
+Representation (IIR)** that models cloud-neutral infrastructure
+semantics.
+
+That RFC is intentionally platform-oriented and is owned by CDKTN.
+
+This RFC describes how AWS CDK could consume those concepts while
+preserving its existing implementation philosophy.
+
+The AWS CDK does **not** expose the shared IIR directly.
+
+Instead:
+
+-   AWS CDK defines an **internal IR**.
+-   The internal IR extends the shared IIR.
+-   AWS-specific semantic information is layered on top of the shared
+    model.
+-   Cloud Assembly evolves to store the internal IR.
+-   Backend serializers consume the internal IR.
+
+This preserves AWS CDK implementation flexibility while ensuring
+interoperability with the broader construct ecosystem.
+
+------------------------------------------------------------------------
+
+# Goals
+
+The goals of this proposal are:
 
 -   Preserve the existing AWS CDK programming model.
--   Preserve all existing L1/L2/L3 constructs.
+-   Preserve all existing L1, L2 and L3 construct APIs.
 -   Preserve jsii compatibility.
--   Allow multiple synthesis backends.
--   Make CloudFormation one backend rather than the backend.
--   Reduce backend-specific logic inside the synthesis pipeline.
--   Enable future backend experimentation without changing construct
-    libraries.
+-   Decouple semantic synthesis from backend serialization.
+-   Support multiple synthesis backends.
+-   Keep backend-specific logic outside semantic synthesis.
+-   Reuse the public IIR defined by Planning RFC-06.
 
-## Non-Goals
+------------------------------------------------------------------------
 
-This RFC does **not** propose:
-- replacing CloudFormation
-- deprecating CloudFormation synthesis
-- changing construct APIs
-- modifying user applications
-- introducing breaking changes
-- replacing the existing implementation strategy for Terraform support
+# Non-Goals
 
+This proposal does **not**:
 
-## Current Architecture
+-   Replace CloudFormation.
+-   Deprecate CloudFormation synthesis.
+-   Introduce breaking changes.
+-   Change construct APIs.
+-   Require existing applications to migrate.
+-   Expose the internal IR as a supported public API.
+
+------------------------------------------------------------------------
+
+# Current Architecture
 
 ``` text
 Construct Tree
@@ -75,157 +128,297 @@ Cloud Assembly
 CloudFormation Template
 ```
 
-Terraform support currently integrates into this architecture while
-preserving these assumptions.
+CloudFormation concepts appear throughout synthesis, making it difficult
+to introduce alternative deployment targets without backend-specific
+adaptations.
 
-## Proposed Architecture
+------------------------------------------------------------------------
+
+# Proposed Architecture
 
 ``` text
 Construct Tree
         │
         ▼
-Semantic Intermediate Representation (internal)
+AWS Internal IR
+ (extends Shared IIR)
         │
         ▼
 Cloud Assembly
         │
-        ├──────────────┐
-        │              │
-        ▼              ▼
-CloudFormation     Terraform
-Serializer         Serializer
+ ┌──────┴───────────────┐
+ ▼                      ▼
+CloudFormation      Terraform
+ Serializer         Serializer
         │              │
         ▼              ▼
 CloudFormation     Terraform JSON/HCL
 ```
 
-The Intermediate Representation becomes the canonical internal output of
-synthesis.
+The internal IR becomes the canonical representation stored inside Cloud
+Assembly. Serializers become responsible only for translating semantic
+concepts into backend-specific deployment artifacts.
 
-Cloud Assembly evolves to store and expose the IR, while remaining the
-primary artifact consumed by synthesis backends.
+------------------------------------------------------------------------
 
-Backends are responsible only for serializing the IR into their
-respective deployment formats.
+# Relationship to Planning RFC-06
 
-## Design Principles
+Planning RFC-06 defines a **Shared Infrastructure Intermediate
+Representation (IIR)** intended to be cloud-neutral and reusable across
+construct ecosystems.
 
-### Backend Neutrality
+This RFC intentionally builds upon that work rather than introducing an
+incompatible representation.
 
-The IR is an **internal implementation detail** of the AWS CDK synthesis
-pipeline. It is not intended to be a public API or extension point.
+The AWS internal IR **MUST** satisfy the following requirements:
 
-The IR should not contain CloudFormation-specific or Terraform-specific
-concepts. Instead, it models infrastructure semantics such as resources,
-dependencies, references, expressions, assets, outputs, parameters, and
-lifecycle metadata.
+1.  It **extends** the shared IIR rather than replacing it.
+2.  Every semantic concept defined by the shared IIR must be
+    representable without loss of meaning.
+3.  AWS-specific synthesis information may be added where required.
+4.  Backend serializers should primarily consume shared IIR concepts,
+    using AWS-specific extensions only when necessary.
 
-Backend-specific constructs are introduced only during serialization.
+Conceptually:
 
-### Semantic Preservation
+``` text
+Shared Infrastructure IIR (Planning RFC-06)
+                ▲
+                │
+      extends / specializes
+                │
+         AWS Internal IR
+                │
+         Cloud Assembly
+                │
+      CloudFormation / Terraform
+```
 
-The purpose of the IR is not to translate CloudFormation. Instead, it
-preserves the semantics expressed by the construct tree.
+This relationship ensures that AWS CDK remains compatible with the
+broader CDKTN ecosystem while retaining freedom to evolve its own
+implementation details.
 
-### Extensibility
+------------------------------------------------------------------------
 
-Future synthesis targets should require only:
-- a serializer
-- runtime-specific expression handling
-- runtime-specific deployment semantics
+# Design Principles
 
-No construct changes should be required.
+## Internal Implementation
 
-## Relationship with Terraform Compatibility
+The AWS IR is intentionally **not** a public API. Keeping it internal
+avoids long-term compatibility constraints and allows the AWS CDK team
+to refine the implementation based on practical experience.
 
-The Terraform compatibility project provides an opportunity to validate
-which concepts belong in a backend-neutral representation.
+## Shared Semantic Foundation
 
-Implementations developed for Terraform, such as dependency graphs,
-expression trees, resource references, lifecycle metadata, provider
-metadata, and asset handling, may inform the design of the internal IR.
+The shared IIR defined by Planning RFC-06 provides the common semantic
+vocabulary. The AWS IR builds upon that vocabulary rather than
+redefining it.
+
+## Backend Neutrality
+
+Semantic synthesis should avoid assumptions about CloudFormation or
+Terraform. Backend-specific constructs are introduced exclusively during
+serialization.
+
+## Evolution of Cloud Assembly
+
+Cloud Assembly should evolve from being primarily a container for
+CloudFormation artifacts into the canonical container for the AWS
+Internal IR.
+
+Rather than storing backend-specific deployment artifacts as the primary
+synthesis output, Cloud Assembly becomes the semantic hand-off point
+between construct synthesis and backend serialization.
+
+This evolution preserves the role of Cloud Assembly while making it
+independent of any single deployment technology.
+
+``` text
+Construct Tree
+      │
+      ▼
+AWS Internal IR
+      │
+      ▼
+Cloud Assembly
+      │
+ ┌────┴─────────────┐
+ ▼                  ▼
+CloudFormation   Terraform
+Serializer       Serializer
+```
+
+## Backend Serializers
+
+Backend serializers are responsible for translating semantic
+infrastructure concepts into deployment-specific representations.
+
+CloudFormation serialization maps the AWS Internal IR into
+CloudFormation templates while preserving existing synthesis behavior.
+
+Terraform serialization maps the same semantic model into Terraform
+JSON/HCL without requiring construct libraries to understand
+Terraform-specific concepts.
+
+Serializers should remain stateless wherever practical and should avoid
+introducing additional semantic transformations beyond those required by
+the target backend.
+
+## Benefits
+
+Separating semantic synthesis from backend serialization produces
+several architectural benefits.
+
+It isolates backend-specific complexity, improves unit testing by
+allowing semantic validation independently of serialization, enables
+multiple deployment engines without changing construct libraries, and
+reduces long-term coupling between AWS CDK and CloudFormation.
+
+Because the AWS Internal IR extends the shared IIR, improvements made to
+common infrastructure semantics can benefit multiple construct
+ecosystems.
 
 ## Migration Strategy
 
 ### Phase 1
 
-Current approach.
+Continue the current Terraform compatibility implementation with minimal
+changes to the existing AWS CDK synthesis pipeline.
 
-``` text
-Construct Tree
-↓
-Existing CloudFormation synthesis
-↓
-Terraform compatibility layer
-```
-
-No significant AWS CDK architectural changes.
+This validates backend compatibility while minimizing implementation
+risk.
 
 ### Phase 2
 
-Introduce the internal IR while preserving existing behavior.
+Introduce the AWS Internal IR as an implementation detail.
 
-Cloud Assembly evolves to use the IR as its canonical internal
+Cloud Assembly evolves to persist the IR while CloudFormation
+serialization continues to produce identical templates.
+
+Terraform serialization begins consuming the same semantic
 representation.
-
-CloudFormation becomes one serializer over the IR, while Terraform
-continues using its serializer.
-
-Applications remain unchanged.
 
 ### Phase 3
 
-Additional synthesis backends may be introduced without modifying
-construct libraries.
+Backend-neutral synthesis becomes the standard internal architecture.
 
-## Benefits
+Additional backends can be introduced by implementing serializers rather
+than modifying construct libraries.
 
--   Reduced backend coupling.
--   Improved separation of concerns.
--   Better testability through backend-independent semantic validation.
--   Future backend extensibility while preserving the AWS CDK
-    programming model.
+## Relationship to Other RFCs
 
-## Compatibility
+### Planning RFC-06 -- Shared Infrastructure Intermediate Representation
 
-This proposal is fully backward compatible.
+Planning RFC-06 defines the public semantic foundation shared across
+construct ecosystems.
 
-Existing applications continue using CloudFormation synthesis by
-default.
+This RFC defines how AWS CDK specializes that foundation through an
+internal IR while remaining semantically compatible.
 
-No construct APIs, jsii APIs, or deployment workflows change unless
-users explicitly select an alternative backend.
+### Planning RFC-07 -- Azure Construct Library Integration
 
-## Prior Art
+Azure validates the shared IIR through an independently developed
+construct ecosystem.
 
-This proposal is informed by similar architectural approaches adopted by other infrastructure tooling.
+Together, the Azure and AWS implementations demonstrate that
+backend-neutral infrastructure semantics are broadly reusable.
 
-### CDK From CloudFormation
+### Compatibility RFCs 002--005
 
-The `cdk-from-cfn` project introduces an intermediate representation between CloudFormation templates and generated CDK constructs. While solving a different problem, it demonstrates the value of introducing a canonical semantic model to decouple producers from consumers.
+RFCs 002--005 remain the implementation strategy for Phase 1.
 
-Source: https://github.com/cdklabs/cdk-from-cfn/blob/6d3864bdd07ee7f7ef3ef20e4cb21f2f4d40d070/ARCHITECTURE.MD
+This RFC intentionally does not replace them. Instead, it describes a
+future architectural evolution informed by the experience gained while
+implementing those RFCs.
 
-### Pulumi CDK Conversion CLI
+## Alternatives Considered
 
-Pulumi's conversion architecture introduces an intermediate representation (PCL) between source infrastructure definitions and generated programs. This separation enables multiple input formats and multiple output languages while keeping transformation logic centralized.
+### Continue Using CloudFormation as the Internal Model
 
-This RFC applies the same architectural principle to AWS CDK synthesis by introducing a semantic intermediate representation between the construct tree and backend-specific serializers.
+Maintaining CloudFormation as the canonical synthesis representation
+minimizes implementation effort but perpetuates tight coupling between
+semantic synthesis and deployment technology.
 
-Source: https://github.com/pulumi/pulumi-tool-cdk2pulumi/blob/61ca33bd54ef408e5dda6c43d3300cbafd2960fd/specs/conversion.md
+### Introduce Separate Backend Pipelines
+
+Independent synthesis pipelines for CloudFormation and Terraform would
+duplicate significant logic and increase maintenance costs.
+
+### Public AWS IR
+
+Exposing the AWS Internal IR as a public API was considered but
+rejected. Doing so would introduce long-term compatibility obligations
+and reduce implementation flexibility.
+
+Using an internal IR that extends the shared public IIR provides a
+cleaner separation of concerns.
+
+## Risks and Mitigations
+
+The primary risk is divergence between the shared IIR and the AWS
+Internal IR.
+
+This is mitigated by requiring that the AWS Internal IR extends, rather
+than replaces, the shared IIR. Backend-neutral concepts should always
+originate in the shared model, while AWS-specific extensions remain
+implementation details.
+
+A second risk is increasing synthesis complexity. This is mitigated by
+introducing the architecture incrementally while preserving existing
+synthesis behavior.
 
 ## Open Questions
 
--   How should backend-specific metadata be attached without
-    compromising backend neutrality?
+-   Which portions of Cloud Assembly should become direct
+    representations of the AWS Internal IR?
+-   How should backend-specific metadata be attached without polluting
+    shared semantic concepts?
 -   Which existing synthesis responsibilities should migrate into
-    backend serializers?
+    serializers over time?
+-   What validation tooling should exist to ensure semantic
+    compatibility between the shared IIR and the AWS Internal IR?
 
-## Note
+## Success Criteria
 
-This RFC intentionally describes a potential long-term evolution of the
-AWS CDK architecture. The Terraform compatibility project does not
-depend on this proposal and should continue targeting the current
-synthesis pipeline. Experience gained from implementing Terraform
-support will inform the evolution of the synthesis architecture and the
-internal Intermediate Representation.
+This proposal will be considered successful when:
+
+-   CloudFormation remains the default synthesis backend with no
+    observable behavior changes.
+-   Terraform consumes the same semantic representation as
+    CloudFormation.
+-   The AWS Internal IR remains compatible with the shared IIR.
+-   Backend implementations require minimal changes to construct
+    libraries.
+-   Future backend experimentation occurs through serializers rather
+    than synthesis redesign.
+
+## Prior Art
+
+The architectural direction proposed here aligns with proven approaches
+adopted by other infrastructure tooling.
+
+Projects such as [cdk-from-cfn](https://github.com/cdklabs/cdk-from-cfn/blob/6d3864bdd07ee7f7ef3ef20e4cb21f2f4d40d070/ARCHITECTURE.MD) demonstrate the value of introducing
+intermediate semantic models between producers and consumers, while
+[Pulumi CDK Conversion CLI](https://github.com/pulumi/pulumi-tool-cdk2pulumi/blob/61ca33bd54ef408e5dda6c43d3300cbafd2960fd/specs/conversion.md) uses an intermediate representation to
+separate semantic analysis from target generation.
+
+This RFC applies the same architectural principle to AWS CDK synthesis
+while preserving backward compatibility and leveraging the shared
+Infrastructure Intermediate Representation defined by Planning RFC-06.
+
+## Conclusion
+
+This RFC presents a long-term evolution of the AWS CDK synthesis
+architecture.
+
+By introducing an internal AWS IR that extends the shared Infrastructure
+Intermediate Representation, the AWS CDK can preserve its existing
+programming model while enabling backend-neutral synthesis. Cloud
+Assembly evolves into the canonical semantic artifact, backend
+serializers become responsible for deployment-specific translation, and
+construct libraries remain focused on expressing infrastructure intent.
+
+Most importantly, this evolution is incremental. Terraform compatibility
+does not depend on it, but the lessons learned from compatibility work
+provide the evidence needed to evolve the synthesis architecture in a
+measured, backward-compatible manner.
