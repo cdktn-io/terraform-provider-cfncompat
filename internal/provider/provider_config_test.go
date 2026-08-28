@@ -305,6 +305,7 @@ func TestProviderModelToAWSBaseConfig(t *testing.T) {
 			SNS:    types.StringValue("http://localhost:4566"),
 			S3:     types.StringValue("http://localhost:4566"),
 			STS:    types.StringValue("http://localhost:4566"),
+			EC2:    types.StringValue("http://localhost:4566"),
 		}
 
 		cfg, diags := providerModelToAWSBaseConfig(ctx, model, "test")
@@ -330,12 +331,14 @@ func TestProviderEndpointsModelToEndpointsConfig(t *testing.T) {
 		SNS:    types.StringValue("http://sns.example"),
 		S3:     types.StringValue("http://s3.example"),
 		STS:    types.StringValue("http://sts.example"),
+		EC2:    types.StringValue("http://ec2.example"),
 	}
 	want := EndpointsConfig{
 		Lambda: "http://lambda.example",
 		SNS:    "http://sns.example",
 		S3:     "http://s3.example",
 		STS:    "http://sts.example",
+		EC2:    "http://ec2.example",
 	}
 	if got := model.toEndpointsConfig(); got != want {
 		t.Errorf("toEndpointsConfig() = %+v, want %+v", got, want)

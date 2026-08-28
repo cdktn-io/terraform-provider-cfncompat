@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## 0.3.0 (Unreleased)
+
+FEATURES:
+
+* **New Data Source:** `cfncompat_pseudo_parameters` — every CloudFormation `AWS::*` pseudo parameter from one data source and one STS `GetCallerIdentity` call (`account_id`, `partition`, `region`, `url_suffix`, plus echoed `stack_name`/`notification_arns`), including a deterministic, stateless `AWS::StackId` derived from `(partition, region, account_id, stack_name)` so custom-resource handlers can keep using it as an ownership key (see `RFCs/006-pseudo-parameter-polyfill.md`)
+* **New Data Source:** `cfncompat_availability_zones` — `Fn::GetAZs`, including CloudFormation's documented EC2-VPC default-subnet behaviour (`names`), plus the full `all_names`/`zone_ids` zone listing; an optional `region` argument mirrors `Fn::GetAZs`'s region parameter, where unset means `AWS::Region`
+* **Provider Configuration:** new `endpoints.ec2` override, alongside the existing `lambda`/`sns`/`s3`/`sts` ones, so the availability-zone data source can be pointed at LocalStack
+
+DEPENDENCIES:
+
+* aws-sdk-go-v2 1.42.1 → 1.45.1, smithy-go 1.27.3 → 1.28.1; new direct dependencies `aws-sdk-go-v2/service/ec2` and `aws-sdk-go-v2/service/sts`
+
+NOTES:
+
+* New `pseudo-parameters-e2e` job in the `workflow_dispatch`-only e2e GitHub workflow (`make -C integ pseudo-parameters`), gated on the same `run_aws` input and OIDC role as the custom-resource job; the fixture is read-only and creates no AWS resources
+* Acceptance tests that call real AWS are now opt-in on top of `TF_ACC=1` via a new `CFNCOMPAT_TEST_AWS=1` gate (`TestAccPseudoParametersDataSource`, `TestAccAvailabilityZonesDataSource`), so the credential-less CI acceptance matrix skips rather than fails them; `TestAccCustomResource` keeps its own `CFNCOMPAT_TEST_LAMBDA_ARN`/`CFNCOMPAT_TEST_RESPONSE_BUCKET` gate
+
 ## 0.2.0 (July 7, 2026)
 
 FEATURES:

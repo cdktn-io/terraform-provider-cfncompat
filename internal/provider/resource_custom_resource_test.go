@@ -637,6 +637,68 @@ func TestCustomResourceConfigure(t *testing.T) {
 	})
 }
 
+// TestCustomResourceValidateConfigStackID pins the ownership-key contract of
+// RFC 006 section 2.3: an omitted stack_id silently becomes the shared
+// "cfncompat/no-stack-id" sentinel, so it must warn (never error -- the
+// default is kept so existing state does not churn), while a set value and a
+// not-yet-known one must stay quiet.
+func TestCustomResourceValidateConfigStackID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		stackID     types.String
+		wantWarning bool
+	}{
+		{name: "null stack_id warns", stackID: types.StringNull(), wantWarning: true},
+		{
+			name:    "configured stack_id is quiet",
+			stackID: types.StringValue("arn:aws:cloudformation:eu-west-1:123456789012:stack/MyApp-Prod/" + strings.Repeat("a", 8) + "-aaaa-5aaa-8aaa-" + strings.Repeat("a", 12)),
+		},
+		// An unknown value is a data source that has not been read yet --
+		// perfectly good wiring, just unresolved at validate time.
+		{name: "unknown stack_id is quiet", stackID: types.StringUnknown()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := customResourceTestSchema(t)
+			model := baseModel()
+			model.StackId = tt.stackID
+
+			// tfsdk.Config is read-only, so the model goes through a
+			// tfsdk.Plan (same value encoding) and its raw value is handed
+			// to the Config.
+			config := tfsdk.Config{Schema: schema, Raw: planFromModel(t, schema, model).Raw}
+
+			r := &CustomResource{}
+			resp := &resource.ValidateConfigResponse{}
+			r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{Config: config}, resp)
+
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("ValidateConfig must never error, got: %v", resp.Diagnostics)
+			}
+			if got := resp.Diagnostics.WarningsCount() > 0; got != tt.wantWarning {
+				t.Fatalf("warning emitted = %v, want %v (diags: %v)", got, tt.wantWarning, resp.Diagnostics)
+			}
+			if !tt.wantWarning {
+				return
+			}
+			if !diagnosticsContain(resp.Diagnostics, "stack_id not set") {
+				t.Errorf("diagnostics %v do not carry the expected summary", resp.Diagnostics)
+			}
+			if !diagnosticsContain(resp.Diagnostics, customResourceDefaultStackID) {
+				t.Errorf("diagnostics %v do not name the shared sentinel", resp.Diagnostics)
+			}
+			if !diagnosticsContain(resp.Diagnostics, "data.cfncompat_pseudo_parameters") {
+				t.Errorf("diagnostics %v do not recommend the pseudo-parameters wiring", resp.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestCustomResourceServiceTokenValidator(t *testing.T) {
 	t.Parallel()
 

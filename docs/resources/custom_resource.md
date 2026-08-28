@@ -71,6 +71,8 @@ output "example_data" {
 - `service_timeout` (Number) Seconds to wait for the handler's response before failing, mirroring CloudFormation's `ServiceTimeout`. Must be between 1 and 3600 (CloudFormation's own range). Defaults to `3600`.
 - `stack_id` (String) CloudFormation-style stack identifier reported in the request event's `StackId` field, passed through verbatim. Typically set by a CDK Terrain synthesis backend to a stack identifier; defaults to `"cfncompat/no-stack-id"`.
 
+~> That default is a **shared sentinel**: every `cfncompat_custom_resource` in the workspace that leaves `stack_id` unset sends the same value. Handlers that treat `StackId` as an ownership key then cannot tell one stack's objects from another's -- CDK's S3 notifications handler, for instance, prefixes every notification `Id` with `{StackId}-` and, on delete, removes exactly the notifications carrying that prefix, so two stacks sharing the sentinel would delete each other's notifications. Wire this to `data.cfncompat_pseudo_parameters.<name>.stack_id` with `stack_name` set (that value is deterministic and stable across applies); leaving it unset emits a warning.
+
 ### Read-Only
 
 - `data` (Dynamic) The handler's response `Data` object, made available as resource attributes. An empty object when the handler's response omits `Data`. If the handler sets `NoEcho: true`, a warning diagnostic is raised because Terraform state cannot redact this data.
