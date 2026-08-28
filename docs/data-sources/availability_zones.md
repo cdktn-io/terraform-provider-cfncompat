@@ -12,7 +12,7 @@ description: |-
     az0 = provider::cfncompat::select(0, data.cfncompat_availability_zones.current.names)
   }
   
-  Unlike the provider-defined functions, this data source requires resolvable AWS credentials and region, and the ec2:DescribeAvailabilityZones permission; ec2:DescribeSubnets is used for the default-subnet restriction and, when it is denied, the restriction is skipped with a warning rather than failing the read. (CloudFormation additionally calls ec2:DescribeAccountAttributes to detect whether the account is on EC2-Classic or EC2-VPC; this provider always assumes EC2-VPC, which is the only platform AWS still offers.)
+  Unlike the provider-defined functions, this data source requires resolvable AWS credentials and region, and the same permissions CloudFormation documents for Fn::GetAZs: ec2:DescribeAvailabilityZones and ec2:DescribeAccountAttributes, plus ec2:DescribeSubnets for the EC2-VPC default-subnet restriction. Every one of them is required: a denied call fails the read rather than silently changing names.
 ---
 
 # cfncompat_availability_zones (Data Source)
@@ -29,7 +29,7 @@ locals {
 }
 ```
 
-Unlike the provider-defined functions, this data source **requires resolvable AWS credentials and region**, and the `ec2:DescribeAvailabilityZones` permission; `ec2:DescribeSubnets` is used for the default-subnet restriction and, when it is denied, the restriction is skipped with a warning rather than failing the read. (CloudFormation additionally calls `ec2:DescribeAccountAttributes` to detect whether the account is on EC2-Classic or EC2-VPC; this provider always assumes EC2-VPC, which is the only platform AWS still offers.)
+Unlike the provider-defined functions, this data source **requires resolvable AWS credentials and region**, and the same permissions CloudFormation documents for `Fn::GetAZs`: `ec2:DescribeAvailabilityZones` and `ec2:DescribeAccountAttributes`, plus `ec2:DescribeSubnets` for the EC2-VPC default-subnet restriction. Every one of them is required: a denied call fails the read rather than silently changing `names`.
 
 ## Example Usage
 
@@ -90,6 +90,8 @@ Zones whose state is not `available` are excluded, as are opted-in Local Zones (
 - `names` (List of String) **The `Fn::GetAZs` value**: the `available` Availability Zones of the region that have a default subnet, in alphabetical order.
 
 CloudFormation documents this exact EC2-VPC behaviour: *"the `Fn::GetAZs` function returns only Availability Zones that have a default subnet unless none of the Availability Zones has a default subnet; in that case, all Availability Zones are returned"*. The default-subnet set comes from `DescribeSubnets` with the `default-for-az=true` filter, and this attribute falls back to `all_names` when that set is empty (e.g. an account whose default VPC has been deleted).
+
+The restriction is EC2-VPC-only, so -- again as CloudFormation does -- the account's `supported-platforms` attribute is read first (`ec2:DescribeAccountAttributes`) and the `DescribeSubnets` call is skipped entirely for an EC2-Classic-only account, whose `names` is then every available zone. EC2-Classic was retired in August 2022, so in practice every account takes the EC2-VPC path.
 
 CloudFormation does not guarantee an order; this data source always sorts alphabetically, so `provider::cfncompat::select(0, ...)` is stable across plans.
 - `zone_ids` (List of String) The zone IDs (e.g. `use1-az1`) of `all_names`, in the same order: `all_names[i]` and `zone_ids[i]` always describe the same zone. Unlike zone *names*, zone IDs are consistent across AWS accounts.

@@ -116,10 +116,11 @@ func TestResolvePseudoParametersComputedValues(t *testing.T) {
 	}
 }
 
-// TestResolvePseudoParametersPartitionPrecedence pins the rule from RFC 006
-// §2.4: the STS caller ARN's partition field wins, and the region-prefix
-// table is only the fallback when the ARN cannot be parsed.
-func TestResolvePseudoParametersPartitionPrecedence(t *testing.T) {
+// TestResolvePseudoParametersPartitionDerivedFromRegion pins the rule from
+// RFC 006 §2.4: AWS::Partition is derived from the region-prefix table, and
+// the STS caller ARN's partition field never overrides it -- a differing one
+// only produces a warning.
+func TestResolvePseudoParametersPartitionDerivedFromRegion(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -128,46 +129,59 @@ func TestResolvePseudoParametersPartitionPrecedence(t *testing.T) {
 		arn           *string
 		wantPartition string
 		wantURLSuffix string
+		wantWarnings  int
 	}{
 		{
-			name:          "caller ARN partition wins over region table",
-			region:        "us-east-1", // the table would say "aws"
+			name:          "region table wins over the caller ARN partition",
+			region:        "us-east-1",
 			arn:           aws.String("arn:aws-us-gov:iam::123456789012:user/x"),
-			wantPartition: "aws-us-gov",
+			wantPartition: "aws",
 			wantURLSuffix: "amazonaws.com",
+			wantWarnings:  1,
 		},
 		{
-			name:          "china caller ARN",
+			// The reviewer's case: a commercial caller ARN with a China
+			// region must not drag partition/url_suffix/stack_id back to the
+			// commercial partition.
+			name:          "china region with a commercial caller ARN",
+			region:        "cn-north-1",
+			arn:           aws.String("arn:aws:iam::123456789012:user/x"),
+			wantPartition: "aws-cn",
+			wantURLSuffix: "amazonaws.com.cn",
+			wantWarnings:  1,
+		},
+		{
+			name:          "china region and china caller ARN agree",
 			region:        "cn-north-1",
 			arn:           aws.String("arn:aws-cn:iam::123456789012:user/x"),
 			wantPartition: "aws-cn",
 			wantURLSuffix: "amazonaws.com.cn",
 		},
 		{
-			name:          "unparsable ARN falls back to the region table",
+			name:          "unparsable ARN is ignored",
 			region:        "cn-north-1",
 			arn:           aws.String("not-an-arn"),
 			wantPartition: "aws-cn",
 			wantURLSuffix: "amazonaws.com.cn",
 		},
 		{
-			name:          "absent ARN falls back to the region table",
+			name:          "absent ARN",
 			region:        "us-gov-west-1",
 			arn:           nil,
 			wantPartition: "aws-us-gov",
 			wantURLSuffix: "amazonaws.com",
 		},
 		{
-			name:          "empty ARN falls back to the region table",
+			name:          "empty ARN",
 			region:        "us-iso-east-1",
 			arn:           aws.String(""),
 			wantPartition: "aws-iso",
 			wantURLSuffix: "c2s.ic.gov",
 		},
 		{
-			// arn.Parse accepts an ARN whose partition field is empty; the
-			// table must still win, since "" is not a partition.
-			name:          "ARN with an empty partition field falls back to the region table",
+			// arn.Parse accepts an ARN whose partition field is empty; "" is
+			// not a partition, so there is nothing to disagree about.
+			name:          "ARN with an empty partition field",
 			region:        "cn-northwest-1",
 			arn:           aws.String("arn::iam::123456789012:user/x"),
 			wantPartition: "aws-cn",
@@ -181,9 +195,15 @@ func TestResolvePseudoParametersPartitionPrecedence(t *testing.T) {
 
 			fake := &fakeCallerIdentity{account: aws.String(testAccountID), arn: tt.arn}
 
-			values, _, err := resolvePseudoParameters(context.Background(), fake, tt.region, "")
+			values, diags, err := resolvePseudoParameters(context.Background(), fake, tt.region, "MyApp-Prod")
 			if err != nil {
 				t.Fatalf("unexpected error: %s", err)
+			}
+			if diags.HasError() {
+				t.Fatalf("unexpected error diagnostics: %v", diags)
+			}
+			if diags.WarningsCount() != tt.wantWarnings {
+				t.Errorf("got %d warnings, want %d (diags: %v)", diags.WarningsCount(), tt.wantWarnings, diags)
 			}
 			if values.Partition != tt.wantPartition {
 				t.Errorf("Partition = %q, want %q", values.Partition, tt.wantPartition)
@@ -191,18 +211,27 @@ func TestResolvePseudoParametersPartitionPrecedence(t *testing.T) {
 			if values.URLSuffix != tt.wantURLSuffix {
 				t.Errorf("URLSuffix = %q, want %q", values.URLSuffix, tt.wantURLSuffix)
 			}
+			// stack_id and id are derived from the same partition, so they
+			// follow the region too.
+			wantStackPrefix := "arn:" + tt.wantPartition + ":cloudformation:" + tt.region + ":"
+			if !strings.HasPrefix(values.StackID, wantStackPrefix) {
+				t.Errorf("StackID = %q, want it to start with %q", values.StackID, wantStackPrefix)
+			}
+			if wantID := tt.wantPartition + ":" + testAccountID + ":" + tt.region; values.ID != wantID {
+				t.Errorf("ID = %q, want %q", values.ID, wantID)
+			}
 		})
 	}
 }
 
 // TestResolvePseudoParametersPartitionMismatchWarning covers the diagnostic
-// side of the precedence rule: when the caller ARN's partition disagrees
-// with the one the region-prefix table would pick, the ARN still wins but
-// both partitions are named in a warning.
+// side of the rule: when the caller ARN's partition disagrees with the
+// region-derived one, the values are unchanged (the region wins) and both
+// partitions are named in a warning.
 func TestResolvePseudoParametersPartitionMismatchWarning(t *testing.T) {
 	t.Parallel()
 
-	t.Run("mismatch warns and keeps the ARN partition", func(t *testing.T) {
+	t.Run("mismatch warns and keeps the region partition", func(t *testing.T) {
 		t.Parallel()
 
 		fake := &fakeCallerIdentity{
@@ -225,9 +254,9 @@ func TestResolvePseudoParametersPartitionMismatchWarning(t *testing.T) {
 		if !diagnosticsContain(diags, "aws-us-gov") || !diagnosticsContain(diags, `"aws"`) {
 			t.Errorf("warning %v does not name both partitions", diags)
 		}
-		// Values are unchanged: the ARN wins, as it does without a warning.
-		if values.Partition != "aws-us-gov" {
-			t.Errorf("Partition = %q, want %q", values.Partition, "aws-us-gov")
+		// Values are unchanged by the mismatch: the region still decides.
+		if values.Partition != "aws" {
+			t.Errorf("Partition = %q, want %q", values.Partition, "aws")
 		}
 		if values.URLSuffix != "amazonaws.com" {
 			t.Errorf("URLSuffix = %q, want %q", values.URLSuffix, "amazonaws.com")

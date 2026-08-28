@@ -9,15 +9,12 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/smithy-go"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -42,11 +39,25 @@ const azZoneTypeAvailabilityZone = "availability-zone"
 // subnet; in that case, all Availability Zones are returned".
 const azDefaultForAZFilter = "default-for-az"
 
+// azPlatformVPC is the value of the EC2 "supported-platforms" account
+// attribute that means the account is on EC2-VPC, i.e. the platform whose
+// default-subnet restriction Fn::GetAZs applies. CloudFormation reads the
+// same attribute (which is why Fn::GetAZs is documented as needing
+// ec2:DescribeAccountAttributes) to decide between the EC2-Classic and the
+// EC2-VPC behaviour.
+//
+// EC2-Classic was retired in August 2022, so every real account reports VPC
+// today and an account reporting no supported platform at all is treated as
+// EC2-VPC. The EC2-Classic branch exists for fidelity with the documented
+// contract, not because it is reachable.
+const azPlatformVPC = "VPC"
+
 // availabilityZonesAPI is the subset of the EC2 API client used to resolve
 // Fn::GetAZs. Implemented by *ec2.Client; faked in tests so the data
 // source's logic runs without AWS.
 type availabilityZonesAPI interface {
 	DescribeAvailabilityZones(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error)
+	DescribeAccountAttributes(ctx context.Context, params *ec2.DescribeAccountAttributesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAccountAttributesOutput, error)
 	DescribeSubnets(ctx context.Context, params *ec2.DescribeSubnetsInput, optFns ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
 }
 
@@ -102,12 +113,10 @@ func (d *AvailabilityZonesDataSource) Schema(_ context.Context, _ datasource.Sch
 			"}\n" +
 			"```\n\n" +
 			"Unlike the provider-defined functions, this data source **requires resolvable AWS " +
-			"credentials and region**, and the `ec2:DescribeAvailabilityZones` permission; " +
-			"`ec2:DescribeSubnets` is used for the default-subnet restriction and, when it is denied, the " +
-			"restriction is skipped with a warning rather than failing the read. (CloudFormation " +
-			"additionally calls `ec2:DescribeAccountAttributes` to detect whether the account is on " +
-			"EC2-Classic or EC2-VPC; this provider always assumes EC2-VPC, which is the only platform AWS " +
-			"still offers.)",
+			"credentials and region**, and the same permissions CloudFormation documents for " +
+			"`Fn::GetAZs`: `ec2:DescribeAvailabilityZones` and `ec2:DescribeAccountAttributes`, plus " +
+			"`ec2:DescribeSubnets` for the EC2-VPC default-subnet restriction. Every one of them is " +
+			"required: a denied call fails the read rather than silently changing `names`.",
 		Attributes: map[string]schema.Attribute{
 			"region": schema.StringAttribute{
 				Optional: true,
@@ -135,6 +144,11 @@ func (d *AvailabilityZonesDataSource) Schema(_ context.Context, _ datasource.Sch
 					"returned\"*. The default-subnet set comes from `DescribeSubnets` with the " +
 					"`default-for-az=true` filter, and this attribute falls back to `all_names` when that set " +
 					"is empty (e.g. an account whose default VPC has been deleted).\n\n" +
+					"The restriction is EC2-VPC-only, so -- again as CloudFormation does -- the account's " +
+					"`supported-platforms` attribute is read first (`ec2:DescribeAccountAttributes`) and the " +
+					"`DescribeSubnets` call is skipped entirely for an EC2-Classic-only account, whose `names` " +
+					"is then every available zone. EC2-Classic was retired in August 2022, so in practice every " +
+					"account takes the EC2-VPC path.\n\n" +
 					"CloudFormation does not guarantee an order; this data source always sorts " +
 					"alphabetically, so `provider::cfncompat::select(0, ...)` is stable across plans.",
 			},
@@ -255,8 +269,7 @@ func (d *AvailabilityZonesDataSource) Read(ctx context.Context, req datasource.R
 		return
 	}
 
-	zones, zoneDiags, err := resolveAvailabilityZones(ctx, d.newClient(region))
-	resp.Diagnostics.Append(zoneDiags...)
+	zones, err := resolveAvailabilityZones(ctx, d.newClient(region))
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to List Availability Zones", err.Error())
 		return
@@ -293,11 +306,9 @@ type availabilityZoneValues struct {
 // resolveAvailabilityZones computes the Fn::GetAZs values for the region the
 // client is bound to. It holds all of the data source's logic, taking the
 // EC2 client as a narrow interface so it can be unit tested with a fake.
-func resolveAvailabilityZones(ctx context.Context, client availabilityZonesAPI) (availabilityZoneValues, diag.Diagnostics, error) {
-	var diags diag.Diagnostics
-
+func resolveAvailabilityZones(ctx context.Context, client availabilityZonesAPI) (availabilityZoneValues, error) {
 	if client == nil {
-		return availabilityZoneValues{}, diags, errors.New("no EC2 client was configured (this is a bug in the cfncompat provider; please report it)")
+		return availabilityZoneValues{}, errors.New("no EC2 client was configured (this is a bug in the cfncompat provider; please report it)")
 	}
 
 	// No server-side filters: the zone state and zone type are filtered
@@ -306,7 +317,7 @@ func resolveAvailabilityZones(ctx context.Context, client availabilityZonesAPI) 
 	// unit tests rather than by EC2.
 	out, err := client.DescribeAvailabilityZones(ctx, &ec2.DescribeAvailabilityZonesInput{})
 	if err != nil {
-		return availabilityZoneValues{}, diags, fmt.Errorf("calling EC2 DescribeAvailabilityZones: %w", err)
+		return availabilityZoneValues{}, fmt.Errorf("calling EC2 DescribeAvailabilityZones: %w", err)
 	}
 
 	type zone struct {
@@ -343,25 +354,24 @@ func resolveAvailabilityZones(ctx context.Context, client availabilityZonesAPI) 
 		values.ZoneIDs = append(values.ZoneIDs, z.id)
 	}
 
+	// The default-subnet restriction is the EC2-VPC behaviour of Fn::GetAZs,
+	// so -- exactly as CloudFormation does -- the account's platform decides
+	// whether it applies at all.
+	onVPC, err := accountIsOnVPCPlatform(ctx, client)
+	if err != nil {
+		return availabilityZoneValues{}, err
+	}
+	if !onVPC {
+		// EC2-Classic has no subnets, so there is nothing to restrict by and
+		// DescribeSubnets is not called: every available zone is the answer.
+		// Cloned so names and all_names never alias the same backing array.
+		values.Names = slices.Clone(values.AllNames)
+		return values, nil
+	}
+
 	defaultSubnetZones, err := availabilityZonesWithDefaultSubnet(ctx, client)
 	if err != nil {
-		// A denied DescribeSubnets must not make Fn::GetAZs unusable: the
-		// default-subnet restriction is a narrowing of the zone list, so the
-		// safe degradation is the same one CloudFormation applies when no
-		// zone has a default subnet -- return every available zone.
-		if isAuthorizationError(err) {
-			diags.AddWarning(
-				"Default-Subnet Restriction Skipped",
-				"The `ec2:DescribeSubnets` call that finds each Availability Zone's default subnet was "+
-					"denied, so `names` could not be restricted to zones that have one and is every "+
-					"available zone (`all_names`) instead -- the same value CloudFormation's `Fn::GetAZs` "+
-					"returns when no Availability Zone has a default subnet. Grant `ec2:DescribeSubnets` "+
-					"for the full CloudFormation behaviour. Underlying error: "+err.Error(),
-			)
-			values.Names = slices.Clone(values.AllNames)
-			return values, diags, nil
-		}
-		return availabilityZoneValues{}, diags, err
+		return availabilityZoneValues{}, err
 	}
 
 	for _, name := range values.AllNames {
@@ -378,19 +388,52 @@ func resolveAvailabilityZones(ctx context.Context, client availabilityZonesAPI) 
 		values.Names = slices.Clone(values.AllNames)
 	}
 
-	return values, diags, nil
+	return values, nil
 }
 
-// isAuthorizationError reports whether err is an AWS API error denying the
-// caller permission -- EC2's UnauthorizedOperation, or one of IAM's
-// AccessDenied* codes (AccessDenied, AccessDeniedException).
-func isAuthorizationError(err error) bool {
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) {
-		return false
+// accountIsOnVPCPlatform reports whether the account supports the EC2-VPC
+// platform, from the EC2 "supported-platforms" account attribute -- the same
+// check CloudFormation makes before applying the default-subnet restriction
+// of Fn::GetAZs.
+//
+// An account that reports no supported platform at all (an empty or absent
+// attribute) is treated as EC2-VPC: EC2-Classic was retired in August 2022,
+// so VPC is what every real account reports, and the EC2-Classic branch
+// exists for fidelity with the documented contract rather than because it is
+// reachable.
+func accountIsOnVPCPlatform(ctx context.Context, client availabilityZonesAPI) (bool, error) {
+	out, err := client.DescribeAccountAttributes(ctx, &ec2.DescribeAccountAttributesInput{
+		AttributeNames: []ec2types.AccountAttributeName{ec2types.AccountAttributeNameSupportedPlatforms},
+	})
+	if err != nil {
+		return false, fmt.Errorf(
+			"calling EC2 DescribeAccountAttributes to read the account's supported platforms "+
+				"(Fn::GetAZs requires the ec2:DescribeAccountAttributes permission): %w", err)
 	}
-	code := apiErr.ErrorCode()
-	return code == "UnauthorizedOperation" || strings.HasPrefix(code, "AccessDenied")
+	if out == nil {
+		return true, nil
+	}
+
+	sawPlatform := false
+	for _, attr := range out.AccountAttributes {
+		if aws.ToString(attr.AttributeName) != string(ec2types.AccountAttributeNameSupportedPlatforms) {
+			continue
+		}
+		for _, value := range attr.AttributeValues {
+			platform := aws.ToString(value.AttributeValue)
+			if platform == "" {
+				continue
+			}
+			sawPlatform = true
+			if platform == azPlatformVPC {
+				return true, nil
+			}
+		}
+	}
+
+	// Only an account that positively reports platforms, none of which is
+	// VPC, is EC2-Classic-only.
+	return !sawPlatform, nil
 }
 
 // availabilityZonesWithDefaultSubnet returns the set of zone names that have
@@ -405,10 +448,17 @@ func availabilityZonesWithDefaultSubnet(ctx context.Context, client availability
 		}},
 	}
 
+	// Every pagination token the loop has already sent, so a service
+	// response that points back at one is caught as a cycle instead of
+	// paging forever.
+	seenTokens := map[string]bool{}
+
 	for {
 		out, err := client.DescribeSubnets(ctx, input)
 		if err != nil {
-			return nil, fmt.Errorf("calling EC2 DescribeSubnets to find default subnets: %w", err)
+			return nil, fmt.Errorf(
+				"calling EC2 DescribeSubnets to find default subnets (Fn::GetAZs requires the "+
+					"ec2:DescribeSubnets permission on EC2-VPC accounts): %w", err)
 		}
 		if out == nil {
 			break
@@ -420,17 +470,21 @@ func availabilityZonesWithDefaultSubnet(ctx context.Context, client availability
 			}
 		}
 
-		if out.NextToken == nil || *out.NextToken == "" {
+		next := aws.ToString(out.NextToken)
+		if next == "" {
 			break
 		}
-		// A page that hands back the very token it was given would page
-		// forever; treat it as a broken response rather than looping.
-		if input.NextToken != nil && *out.NextToken == *input.NextToken {
+		// A page pointing at a token the loop has already followed -- the
+		// token it was just called with, or one from any earlier page -- is a
+		// pagination cycle that would page forever; treat it as a broken
+		// response rather than looping.
+		if seenTokens[next] {
 			return nil, fmt.Errorf(
-				"EC2 DescribeSubnets returned the same pagination token %q it was called with, which would page forever",
-				*out.NextToken,
+				"EC2 DescribeSubnets returned the pagination token %q a second time: a pagination cycle that would page forever",
+				next,
 			)
 		}
+		seenTokens[next] = true
 		input.NextToken = out.NextToken
 	}
 

@@ -5,8 +5,8 @@ All notable changes to this project will be documented in this file.
 
 FEATURES:
 
-* **New Data Source:** `cfncompat_pseudo_parameters` — every CloudFormation `AWS::*` pseudo parameter from one data source and one STS `GetCallerIdentity` call (`account_id`, `partition`, `region`, `url_suffix`, plus echoed `stack_name`/`notification_arns`), including a deterministic, stateless `AWS::StackId` derived from `(partition, region, account_id, stack_name)` so custom-resource handlers can keep using it as an ownership key (see `RFCs/006-pseudo-parameter-polyfill.md`)
-* **New Data Source:** `cfncompat_availability_zones` — `Fn::GetAZs`, including CloudFormation's documented EC2-VPC default-subnet behaviour (`names`), plus the full `all_names`/`zone_ids` zone listing; an optional `region` argument mirrors `Fn::GetAZs`'s region parameter, where unset means `AWS::Region`
+* **New Data Source:** `cfncompat_pseudo_parameters` — every CloudFormation `AWS::*` pseudo parameter from one data source and one STS `GetCallerIdentity` call (`account_id`, `partition` and `url_suffix` both derived from the region, plus echoed `stack_name`/`notification_arns`), including a deterministic, stateless `AWS::StackId` derived from `(partition, region, account_id, stack_name)` so custom-resource handlers can keep using it as an ownership key (see `RFCs/006-pseudo-parameter-polyfill.md`)
+* **New Data Source:** `cfncompat_availability_zones` — `Fn::GetAZs`, including CloudFormation's documented EC2-VPC default-subnet behaviour (`names`), plus the full `all_names`/`zone_ids` zone listing; an optional `region` argument mirrors `Fn::GetAZs`'s region parameter, where unset means `AWS::Region`. Needs the permissions CloudFormation documents for `Fn::GetAZs`: `ec2:DescribeAvailabilityZones` and `ec2:DescribeAccountAttributes` (the `supported-platforms` check that decides whether the default-subnet restriction applies), plus `ec2:DescribeSubnets` for EC2-VPC accounts
 * **Provider Configuration:** new `endpoints.ec2` override, alongside the existing `lambda`/`sns`/`s3`/`sts` ones, so the availability-zone data source can be pointed at LocalStack
 
 DEPENDENCIES:

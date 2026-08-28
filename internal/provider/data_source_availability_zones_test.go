@@ -37,15 +37,31 @@ type fakeAvailabilityZonesAPI struct {
 	// it was called with (and a fixed token on the first call), i.e. the
 	// pathological response that would page forever.
 	echoSubnetToken bool
+	// subnetTokenCycle is the sequence of NextTokens DescribeSubnets hands
+	// back, one per call, regardless of the token it was given -- so a cycle
+	// that revisits an earlier token ("A", "B", "A") can be provoked.
+	subnetTokenCycle []string
+	// supportedPlatforms is the value of the EC2 supported-platforms account
+	// attribute. nil means the default, ["VPC"], which is what every account
+	// has reported since EC2-Classic was retired.
+	supportedPlatforms []string
+	// omitPlatformsAttribute makes DescribeAccountAttributes answer with no
+	// attributes at all, i.e. an account that reports no platform.
+	omitPlatformsAttribute bool
 
-	zonesErr   error
-	subnetsErr error
+	zonesErr             error
+	subnetsErr           error
+	accountAttributesErr error
 
-	describeZonesCalls   int
-	describeSubnetsCalls int
+	describeZonesCalls             int
+	describeSubnetsCalls           int
+	describeAccountAttributesCalls int
 	// lastSubnetFilters records the filters of the most recent
 	// DescribeSubnets call, so the default-for-az filter can be asserted.
 	lastSubnetFilters []ec2types.Filter
+	// lastAccountAttributeNames records the attribute names of the most
+	// recent DescribeAccountAttributes call.
+	lastAccountAttributeNames []ec2types.AccountAttributeName
 }
 
 func (f *fakeAvailabilityZonesAPI) DescribeAvailabilityZones(_ context.Context, _ *ec2.DescribeAvailabilityZonesInput, _ ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
@@ -56,12 +72,46 @@ func (f *fakeAvailabilityZonesAPI) DescribeAvailabilityZones(_ context.Context, 
 	return &ec2.DescribeAvailabilityZonesOutput{AvailabilityZones: f.zones}, nil
 }
 
+func (f *fakeAvailabilityZonesAPI) DescribeAccountAttributes(_ context.Context, in *ec2.DescribeAccountAttributesInput, _ ...func(*ec2.Options)) (*ec2.DescribeAccountAttributesOutput, error) {
+	f.describeAccountAttributesCalls++
+	if f.accountAttributesErr != nil {
+		return nil, f.accountAttributesErr
+	}
+	f.lastAccountAttributeNames = in.AttributeNames
+
+	if f.omitPlatformsAttribute {
+		return &ec2.DescribeAccountAttributesOutput{}, nil
+	}
+
+	platforms := f.supportedPlatforms
+	if platforms == nil {
+		platforms = []string{azPlatformVPC}
+	}
+	attr := ec2types.AccountAttribute{
+		AttributeName: aws.String(string(ec2types.AccountAttributeNameSupportedPlatforms)),
+	}
+	for _, platform := range platforms {
+		attr.AttributeValues = append(attr.AttributeValues, ec2types.AccountAttributeValue{
+			AttributeValue: aws.String(platform),
+		})
+	}
+	return &ec2.DescribeAccountAttributesOutput{AccountAttributes: []ec2types.AccountAttribute{attr}}, nil
+}
+
 func (f *fakeAvailabilityZonesAPI) DescribeSubnets(_ context.Context, in *ec2.DescribeSubnetsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
 	f.describeSubnetsCalls++
 	if f.subnetsErr != nil {
 		return nil, f.subnetsErr
 	}
 	f.lastSubnetFilters = in.Filters
+
+	if len(f.subnetTokenCycle) > 0 {
+		out := &ec2.DescribeSubnetsOutput{}
+		if i := f.describeSubnetsCalls - 1; i < len(f.subnetTokenCycle) {
+			out.NextToken = aws.String(f.subnetTokenCycle[i])
+		}
+		return out, nil
+	}
 
 	if f.echoSubnetToken {
 		out := &ec2.DescribeSubnetsOutput{NextToken: aws.String("stuck")}
@@ -115,7 +165,7 @@ func TestResolveAvailabilityZonesDefaultSubnetFilter(t *testing.T) {
 		subnetPages: [][]string{{"eu-west-1c", "eu-west-1a"}},
 	}
 
-	got, _, err := resolveAvailabilityZones(context.Background(), fake)
+	got, err := resolveAvailabilityZones(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -150,7 +200,7 @@ func TestResolveAvailabilityZonesFallback(t *testing.T) {
 		subnetPages: nil,
 	}
 
-	got, _, err := resolveAvailabilityZones(context.Background(), fake)
+	got, err := resolveAvailabilityZones(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -201,7 +251,7 @@ func TestResolveAvailabilityZonesFiltersAndSorts(t *testing.T) {
 		subnetPages: [][]string{{"us-east-1a", "us-east-1b", "us-east-1c"}},
 	}
 
-	got, _, err := resolveAvailabilityZones(context.Background(), fake)
+	got, err := resolveAvailabilityZones(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -225,7 +275,7 @@ func TestResolveAvailabilityZonesPaginatesSubnets(t *testing.T) {
 		subnetPages: [][]string{{"eu-west-1a"}, {"eu-west-1c"}},
 	}
 
-	got, _, err := resolveAvailabilityZones(context.Background(), fake)
+	got, err := resolveAvailabilityZones(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -241,7 +291,7 @@ func TestResolveAvailabilityZonesEmptyRegion(t *testing.T) {
 
 	fake := &fakeAvailabilityZonesAPI{}
 
-	got, _, err := resolveAvailabilityZones(context.Background(), fake)
+	got, err := resolveAvailabilityZones(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -260,7 +310,7 @@ func TestResolveAvailabilityZonesErrors(t *testing.T) {
 
 		fake := &fakeAvailabilityZonesAPI{zonesErr: errors.New("boom")}
 
-		_, _, err := resolveAvailabilityZones(context.Background(), fake)
+		_, err := resolveAvailabilityZones(context.Background(), fake)
 		if err == nil {
 			t.Fatal("expected an error, got none")
 		}
@@ -280,7 +330,7 @@ func TestResolveAvailabilityZonesErrors(t *testing.T) {
 			subnetsErr: errors.New("access denied"),
 		}
 
-		_, _, err := resolveAvailabilityZones(context.Background(), fake)
+		_, err := resolveAvailabilityZones(context.Background(), fake)
 		if err == nil {
 			t.Fatal("expected an error, got none")
 		}
@@ -292,7 +342,7 @@ func TestResolveAvailabilityZonesErrors(t *testing.T) {
 	t.Run("nil client", func(t *testing.T) {
 		t.Parallel()
 
-		_, _, err := resolveAvailabilityZones(context.Background(), nil)
+		_, err := resolveAvailabilityZones(context.Background(), nil)
 		if err == nil {
 			t.Fatal("expected an error with no EC2 client, got none")
 		}
@@ -494,7 +544,7 @@ func TestResolveAvailabilityZonesRepeatedSubnetToken(t *testing.T) {
 		echoSubnetToken: true,
 	}
 
-	_, _, err := resolveAvailabilityZones(context.Background(), fake)
+	_, err := resolveAvailabilityZones(context.Background(), fake)
 	if err == nil {
 		t.Fatal("expected an error when DescribeSubnets repeats its pagination token, got none")
 	}
@@ -508,75 +558,175 @@ func TestResolveAvailabilityZonesRepeatedSubnetToken(t *testing.T) {
 	}
 }
 
-// TestResolveAvailabilityZonesSubnetsDenied pins the degradation rule: a
-// DescribeSubnets call the caller is not allowed to make must not break
-// Fn::GetAZs -- names falls back to every available zone, with a warning
-// naming the missing permission.
-func TestResolveAvailabilityZonesSubnetsDenied(t *testing.T) {
-	t.Parallel()
-
-	denials := []struct {
-		code    string
-		message string
-	}{
-		{code: "UnauthorizedOperation", message: "You are not authorized to perform this operation."},
-		{code: "AccessDenied", message: "Access denied"},
-		{code: "AccessDeniedException", message: "Access denied"},
-	}
-
-	for _, denial := range denials {
-		t.Run(denial.code, func(t *testing.T) {
-			t.Parallel()
-
-			fake := &fakeAvailabilityZonesAPI{
-				zones: []ec2types.AvailabilityZone{
-					availableZone("eu-west-1a", "euw1-az1"),
-					availableZone("eu-west-1b", "euw1-az2"),
-				},
-				subnetsErr: &smithy.GenericAPIError{Code: denial.code, Message: denial.message},
-			}
-
-			got, diags, err := resolveAvailabilityZones(context.Background(), fake)
-			if err != nil {
-				t.Fatalf("a denied DescribeSubnets must not fail the read: %s", err)
-			}
-			if diags.HasError() {
-				t.Fatalf("expected a warning, got errors: %v", diags)
-			}
-			if diags.WarningsCount() != 1 {
-				t.Fatalf("got %d warnings, want 1 (diags: %v)", diags.WarningsCount(), diags)
-			}
-			if !diagnosticsContain(diags, "ec2:DescribeSubnets") {
-				t.Errorf("warning %v does not name the missing permission", diags)
-			}
-			if !diagnosticsContain(diags, "no Availability Zone has a default subnet") {
-				t.Errorf("warning %v does not explain the CloudFormation fallback rule", diags)
-			}
-
-			assertStrings(t, "names", got.Names, []string{"eu-west-1a", "eu-west-1b"})
-			assertStrings(t, "all_names", got.AllNames, []string{"eu-west-1a", "eu-west-1b"})
-			assertNotAliased(t, got)
-		})
-	}
-}
-
-// TestResolveAvailabilityZonesOtherSubnetErrorsFail is the other half of the
-// rule: only an authorization failure degrades: everything else is a real
-// error.
-func TestResolveAvailabilityZonesOtherSubnetErrorsFail(t *testing.T) {
+// TestResolveAvailabilityZonesSubnetTokenCycle is the general case of the
+// same guard: a response cycling back to a token from an earlier page ("" ->
+// A -> B -> A) is caught too, not just an immediately repeated one.
+func TestResolveAvailabilityZonesSubnetTokenCycle(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeAvailabilityZonesAPI{
-		zones:      []ec2types.AvailabilityZone{availableZone("eu-west-1a", "euw1-az1")},
-		subnetsErr: &smithy.GenericAPIError{Code: "RequestLimitExceeded", Message: "throttled"},
+		zones:            []ec2types.AvailabilityZone{availableZone("eu-west-1a", "euw1-az1")},
+		subnetTokenCycle: []string{"A", "B", "A"},
 	}
 
-	_, _, err := resolveAvailabilityZones(context.Background(), fake)
+	_, err := resolveAvailabilityZones(context.Background(), fake)
 	if err == nil {
-		t.Fatal("expected a non-authorization DescribeSubnets failure to be an error, got none")
+		t.Fatal("expected an error when DescribeSubnets cycles its pagination tokens, got none")
 	}
-	if !strings.Contains(err.Error(), "RequestLimitExceeded") {
+	if !strings.Contains(err.Error(), "pagination cycle") {
+		t.Errorf("error %q does not explain the pagination cycle", err)
+	}
+	// Three calls: "" -> A, A -> B, B -> A, the last of which is caught.
+	if fake.describeSubnetsCalls != 3 {
+		t.Errorf("DescribeSubnets called %d times, want 3", fake.describeSubnetsCalls)
+	}
+}
+
+// TestResolveAvailabilityZonesSubnetsUnauthorized pins the rule that a
+// DescribeSubnets call the caller is not allowed to make is a hard error:
+// silently widening `names` to every zone would hand back a different
+// Fn::GetAZs value than CloudFormation would, so the read fails and names
+// the missing permission instead.
+func TestResolveAvailabilityZonesSubnetsUnauthorized(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeAvailabilityZonesAPI{
+		zones: []ec2types.AvailabilityZone{
+			availableZone("eu-west-1a", "euw1-az1"),
+			availableZone("eu-west-1b", "euw1-az2"),
+		},
+		subnetsErr: &smithy.GenericAPIError{
+			Code:    "UnauthorizedOperation",
+			Message: "You are not authorized to perform this operation.",
+		},
+	}
+
+	_, err := resolveAvailabilityZones(context.Background(), fake)
+	if err == nil {
+		t.Fatal("expected a denied DescribeSubnets to be an error, got none")
+	}
+	if !strings.Contains(err.Error(), "UnauthorizedOperation") {
 		t.Errorf("error %q does not wrap the underlying failure", err)
+	}
+	if !strings.Contains(err.Error(), "ec2:DescribeSubnets") {
+		t.Errorf("error %q does not name the required permission", err)
+	}
+}
+
+// TestResolveAvailabilityZonesVPCPlatform is the EC2-VPC half of the
+// supported-platforms check: the account reports VPC, so the default-subnet
+// restriction applies as usual.
+func TestResolveAvailabilityZonesVPCPlatform(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeAvailabilityZonesAPI{
+		zones: []ec2types.AvailabilityZone{
+			availableZone("eu-west-1a", "euw1-az1"),
+			availableZone("eu-west-1b", "euw1-az2"),
+		},
+		supportedPlatforms: []string{azPlatformVPC},
+		subnetPages:        [][]string{{"eu-west-1b"}},
+	}
+
+	got, err := resolveAvailabilityZones(context.Background(), fake)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	assertStrings(t, "names", got.Names, []string{"eu-west-1b"})
+	assertStrings(t, "all_names", got.AllNames, []string{"eu-west-1a", "eu-west-1b"})
+	if fake.describeAccountAttributesCalls != 1 {
+		t.Errorf("DescribeAccountAttributes called %d times, want 1", fake.describeAccountAttributesCalls)
+	}
+	if len(fake.lastAccountAttributeNames) != 1 || fake.lastAccountAttributeNames[0] != ec2types.AccountAttributeNameSupportedPlatforms {
+		t.Errorf("DescribeAccountAttributes attribute names = %v, want [supported-platforms]", fake.lastAccountAttributeNames)
+	}
+	if fake.describeSubnetsCalls != 1 {
+		t.Errorf("DescribeSubnets called %d times, want 1", fake.describeSubnetsCalls)
+	}
+}
+
+// TestResolveAvailabilityZonesClassicOnlyPlatform is the other half: an
+// account that reports EC2-Classic and no VPC has no subnets to restrict by,
+// so DescribeSubnets is never called and names is every available zone.
+//
+// EC2-Classic was retired in August 2022, so no real account takes this
+// branch; it exists for fidelity with the documented Fn::GetAZs contract.
+func TestResolveAvailabilityZonesClassicOnlyPlatform(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeAvailabilityZonesAPI{
+		zones: []ec2types.AvailabilityZone{
+			availableZone("eu-west-1a", "euw1-az1"),
+			availableZone("eu-west-1b", "euw1-az2"),
+		},
+		supportedPlatforms: []string{"EC2"},
+		// Would restrict names to one zone if it were ever read.
+		subnetPages: [][]string{{"eu-west-1a"}},
+	}
+
+	got, err := resolveAvailabilityZones(context.Background(), fake)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if fake.describeSubnetsCalls != 0 {
+		t.Errorf("DescribeSubnets called %d times on an EC2-Classic-only account, want 0", fake.describeSubnetsCalls)
+	}
+
+	assertStrings(t, "names", got.Names, []string{"eu-west-1a", "eu-west-1b"})
+	assertStrings(t, "all_names", got.AllNames, []string{"eu-west-1a", "eu-west-1b"})
+	assertNotAliased(t, got)
+}
+
+// TestResolveAvailabilityZonesMissingPlatformAttribute covers the account
+// that reports no supported-platforms attribute at all: it is treated as
+// EC2-VPC, so the default-subnet restriction still applies.
+func TestResolveAvailabilityZonesMissingPlatformAttribute(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeAvailabilityZonesAPI{
+		zones: []ec2types.AvailabilityZone{
+			availableZone("eu-west-1a", "euw1-az1"),
+			availableZone("eu-west-1b", "euw1-az2"),
+		},
+		omitPlatformsAttribute: true,
+		subnetPages:            [][]string{{"eu-west-1a"}},
+	}
+
+	got, err := resolveAvailabilityZones(context.Background(), fake)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	assertStrings(t, "names", got.Names, []string{"eu-west-1a"})
+	if fake.describeSubnetsCalls != 1 {
+		t.Errorf("DescribeSubnets called %d times, want 1 (a platform-less account is EC2-VPC)", fake.describeSubnetsCalls)
+	}
+}
+
+// TestResolveAvailabilityZonesAccountAttributesError pins that a failing
+// DescribeAccountAttributes fails the read and names the permission
+// Fn::GetAZs needs, rather than guessing a platform.
+func TestResolveAvailabilityZonesAccountAttributesError(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeAvailabilityZonesAPI{
+		zones: []ec2types.AvailabilityZone{availableZone("eu-west-1a", "euw1-az1")},
+		accountAttributesErr: &smithy.GenericAPIError{
+			Code:    "UnauthorizedOperation",
+			Message: "You are not authorized to perform this operation.",
+		},
+	}
+
+	_, err := resolveAvailabilityZones(context.Background(), fake)
+	if err == nil {
+		t.Fatal("expected a failing DescribeAccountAttributes to be an error, got none")
+	}
+	if !strings.Contains(err.Error(), "ec2:DescribeAccountAttributes") {
+		t.Errorf("error %q does not name the required permission", err)
+	}
+	if fake.describeSubnetsCalls != 0 {
+		t.Errorf("DescribeSubnets called %d times after the platform check failed, want 0", fake.describeSubnetsCalls)
 	}
 }
 
@@ -593,7 +743,7 @@ func TestResolveAvailabilityZonesFallbackDoesNotAlias(t *testing.T) {
 		},
 	}
 
-	got, _, err := resolveAvailabilityZones(context.Background(), fake)
+	got, err := resolveAvailabilityZones(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}

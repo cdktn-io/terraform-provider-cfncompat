@@ -50,7 +50,8 @@ other provider still resolves normally from the public registry.
   `CFNCOMPAT_E2E_TF_BINARY=tofu` (must also be on `PATH`).
 - AWS credentials — required for `TestE2EPseudoParameters` /
   `make pseudo-parameters` (read-only: `sts:GetCallerIdentity`,
-  `ec2:DescribeAvailabilityZones`, `ec2:DescribeSubnets`) and for
+  `ec2:DescribeAvailabilityZones`, `ec2:DescribeAccountAttributes`,
+  `ec2:DescribeSubnets`) and for
   `TestE2ECustomResource` / `make custom-resource` (permission to create S3
   buckets, IAM roles, and Lambda functions). `TestE2EFunctions` /
   `make functions` needs no AWS credentials at all.

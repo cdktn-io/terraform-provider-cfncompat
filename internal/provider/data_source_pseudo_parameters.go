@@ -44,8 +44,9 @@ var pseudoParametersStackIDNamespace = [16]byte{
 }
 
 // callerIdentityGetter is the subset of the STS API client used to resolve
-// AWS::AccountId and AWS::Partition. Implemented by *sts.Client; faked in
-// tests so the data source's logic runs without AWS.
+// AWS::AccountId (and, from the caller ARN, to warn when the credentials'
+// partition disagrees with the region's). Implemented by *sts.Client; faked
+// in tests so the data source's logic runs without AWS.
 type callerIdentityGetter interface {
 	GetCallerIdentity(ctx context.Context, params *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
 }
@@ -145,12 +146,16 @@ func (d *PseudoParametersDataSource) Schema(_ context.Context, _ datasource.Sche
 			"partition": schema.StringAttribute{
 				Computed: true,
 				Description: "CloudFormation's AWS::Partition, e.g. \"aws\", \"aws-cn\" or \"aws-us-gov\". " +
-					"Taken from the STS caller ARN (authoritative); falls back to a region-name prefix table " +
-					"when the caller ARN cannot be parsed.",
+					"Derived from the resolved region with a region-name prefix table, exactly as url_suffix " +
+					"is. A STS caller ARN naming a different partition only raises a warning.",
 				MarkdownDescription: "CloudFormation's [`AWS::Partition`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/pseudo-parameter-reference.html), " +
-					"e.g. `aws`, `aws-cn` or `aws-us-gov`. Taken from the second field of the STS caller ARN " +
-					"(authoritative); falls back to a region-name prefix table (mirroring aws-cdk's " +
-					"`RegionInfo.get(region).partition`) when the caller ARN cannot be parsed.",
+					"e.g. `aws`, `aws-cn` or `aws-us-gov`. Derived from the resolved `region` with a " +
+					"region-name prefix table (mirroring aws-cdk's `RegionInfo.get(region).partition`), " +
+					"exactly as `url_suffix` is -- CloudFormation resolves both from the region the stack is " +
+					"deployed to, so `partition`, `url_suffix`, `stack_id` and `id` can never disagree with " +
+					"`region`.\n\n" +
+					"When the STS caller ARN names a different partition -- credentials from one partition and " +
+					"a region from another -- the region still wins and a warning names both partitions.",
 			},
 			"region": schema.StringAttribute{
 				Computed: true,
@@ -171,7 +176,8 @@ func (d *PseudoParametersDataSource) Schema(_ context.Context, _ datasource.Sche
 				MarkdownDescription: "CloudFormation's [`AWS::URLSuffix`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/pseudo-parameter-reference.html): " +
 					"the DNS suffix of the partition, e.g. `amazonaws.com` or `amazonaws.com.cn`. No AWS API " +
 					"returns it, so -- exactly like `hashicorp/aws`'s `aws_partition.dns_suffix` -- it comes " +
-					"from a static table, here mirrored from aws-cdk's `RegionInfo.get(region).domainSuffix`.",
+					"from a static table, here mirrored from aws-cdk's `RegionInfo.get(region).domainSuffix`, " +
+					"keyed by the region-derived `partition`.",
 			},
 			"stack_id": schema.StringAttribute{
 				Computed: true,
@@ -334,30 +340,29 @@ func resolvePseudoParameters(ctx context.Context, stsClient callerIdentityGetter
 		Region:    region,
 	}
 
-	// The caller ARN's partition field is authoritative; the region-prefix
-	// table is only the fallback (it cannot know about a partition added
-	// after this provider was built).
-	tablePartition := partitionForRegion(region)
-	values.Partition = tablePartition
+	// AWS::Partition is derived from the region, exactly as AWS::URLSuffix
+	// is: CloudFormation resolves both from the region the stack is deployed
+	// to, so the region-prefix table is the single source for partition,
+	// url_suffix, stack_id and id, and the four can never disagree with
+	// AWS::Region.
+	values.Partition = partitionForRegion(region)
+
+	// The STS caller ARN carries a partition too. It never overrides the
+	// region-derived value, but a disagreement means the credentials and the
+	// region belong to different partitions (or the region prefix is one this
+	// provider's table does not know), which is worth saying out loud.
 	if out.Arn != nil {
-		if parsed, parseErr := arn.Parse(*out.Arn); parseErr == nil && parsed.Partition != "" {
-			values.Partition = parsed.Partition
-			// A caller ARN from a different partition than the region name
-			// implies a misconfiguration (credentials from one partition,
-			// region from another) or a partition prefix this provider's
-			// table does not know. The ARN still wins, but say so.
-			if parsed.Partition != tablePartition {
-				diags.AddWarning(
-					"AWS Partition Mismatch",
-					fmt.Sprintf(
-						"The region %q belongs to the %q partition according to this provider's region-prefix "+
-							"table, but the STS caller ARN says %q. The caller ARN is authoritative, so "+
-							"AWS::Partition is %q and AWS::URLSuffix is derived from it. Check that the "+
-							"provider's region and credentials belong to the same AWS partition.",
-						region, tablePartition, parsed.Partition, parsed.Partition,
-					),
-				)
-			}
+		if parsed, parseErr := arn.Parse(*out.Arn); parseErr == nil && parsed.Partition != "" && parsed.Partition != values.Partition {
+			diags.AddWarning(
+				"AWS Partition Mismatch",
+				fmt.Sprintf(
+					"The region %q belongs to the %q partition according to this provider's region-prefix "+
+						"table, but the STS caller ARN says %q. AWS::Partition follows the region, so it is "+
+						"%q and AWS::URLSuffix, AWS::StackId and id are derived from it. Check that the "+
+						"provider's region and credentials belong to the same AWS partition.",
+					region, values.Partition, parsed.Partition, values.Partition,
+				),
+			)
 		}
 	}
 

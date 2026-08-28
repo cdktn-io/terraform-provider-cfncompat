@@ -63,7 +63,7 @@ one `DataAwsPartition` for both `partition` and `urlSuffix`.
 | `stack_name` | optional input, echoed | `AWS::StackName`. The bridge passes `Stack.stackName`. |
 | `notification_arns` | optional input (list), echoed; default `[]` | `AWS::NotificationARNs`. The bridge passes `StackProps.notificationArns` (`stack.ts:510-516`); no L2 reads it. |
 | `account_id` | computed | `AWS::AccountId` — STS `GetCallerIdentity` (direct `sts` client honouring `endpoints.sts`, behind a fakeable interface) |
-| `partition` | computed | `AWS::Partition` — from the caller ARN; falls back to a region-prefix table when STS is unavailable |
+| `partition` | computed | `AWS::Partition` — from the region-prefix table; a differing caller-ARN partition only produces a warning |
 | `region` | computed | `AWS::Region` — the resolved provider region; error if unresolvable |
 | `url_suffix` | computed | `AWS::URLSuffix` — partition → DNS suffix table (see §2.4) |
 | `stack_id` | computed | `AWS::StackId` — `arn:<partition>:cloudformation:<region>:<account_id>:stack/<stack_name>/<uuid-v5>`; `null` when `stack_name` is unset |
@@ -162,9 +162,13 @@ Mirrored from aws-cdk `region-info/lib/aws-entities.ts:90-97` (the table behind
 | `eu-isoe-` | `aws-iso-e` | `cloud.adc-e.uk` |
 | `eusc-de-` | `aws-eusc` | `amazonaws.eu` |
 
-`partition` prefers the STS caller ARN (authoritative); the table is the fallback and is the only
-source for `url_suffix` (no AWS API returns it — `hashicorp/aws`'s `aws_partition.dns_suffix`
-is likewise a static SDK table).
+The table is authoritative for `partition`, exactly as it is the only source for `url_suffix` (no
+AWS API returns that — `hashicorp/aws`'s `aws_partition.dns_suffix` is likewise a static SDK
+table). CloudFormation resolves both from the region the stack is deployed to, so deriving them
+from the same input keeps `partition`, `url_suffix`, `stack_id` and `id` consistent with
+`AWS::Region`. The STS caller ARN carries a partition too, but it never overrides the table: a
+disagreement (credentials from one partition, region from another) only raises a warning naming
+both.
 
 ## 3. `data "cfncompat_availability_zones"` — `Fn::GetAZs`
 
@@ -183,8 +187,11 @@ if (agnostic) return [Fn.select(0, Fn.getAzs()), Fn.select(1, Fn.getAzs())];
 | `zone_ids` | computed list | zone ids aligned with `all_names` |
 | `id` | computed | the region |
 
-Implementation: EC2 `DescribeAvailabilityZones` + `DescribeSubnets`; new `endpoints.ec2`
-provider override (LocalStack parity with the existing `lambda`/`sns`/`s3`/`sts`).
+Implementation: EC2 `DescribeAvailabilityZones` + `DescribeAccountAttributes`
+(`supported-platforms`, the same platform check CloudFormation makes; EC2-Classic-only accounts
+skip the subnet call, and a missing attribute counts as EC2-VPC) + `DescribeSubnets`; every one of
+the three is required and a failure of any is a hard error. New `endpoints.ec2` provider override
+(LocalStack parity with the existing `lambda`/`sns`/`s3`/`sts`).
 
 ```hcl
 data "cfncompat_availability_zones" "current" {}                        # Fn::GetAZs ""
@@ -245,9 +252,10 @@ use `data.cfncompat_pseudo_parameters.*.region` only as the fallback.
 ## 6. Testing
 
 - **Unit** (no AWS): STS/EC2 behind narrow interfaces with fakes (the RFC 005 pattern) —
-  partition/url-suffix table, caller-ARN partition precedence, `stack_id` determinism and
-  `null` without `stack_name`, `notification_arns` echo/default, GetAZs default-subnet filter,
-  fallback and ordering, `region = ""` handling, `ConfigErr` surfacing.
+  partition/url-suffix table, region-derived partition (a differing caller ARN only warns),
+  `stack_id` determinism and `null` without `stack_name`, `notification_arns` echo/default,
+  GetAZs supported-platforms branches, default-subnet filter, fallback and ordering, subnet
+  pagination cycles, `region = ""` handling, `ConfigErr` surfacing.
 - **Acceptance** (`TF_ACC=1` + credentials): both data sources against real AWS.
 - **E2E** (terratest, `integ/`): `fixtures/pseudo_parameters` composing both data sources with
   `select` and `cfncompat_custom_resource.stack_id`; `TestE2EPseudoParameters` gated on
