@@ -48,8 +48,10 @@ func TestPartitionAndURLSuffixForRegion(t *testing.T) {
 			if got := partitionForRegion(tt.region); got != tt.wantPartition {
 				t.Errorf("partitionForRegion(%q) = %q, want %q", tt.region, got, tt.wantPartition)
 			}
-			if got := urlSuffixForRegion(tt.region); got != tt.wantURLSuffix {
-				t.Errorf("urlSuffixForRegion(%q) = %q, want %q", tt.region, got, tt.wantURLSuffix)
+			// The region -> suffix path production takes: partition first,
+			// then the partition's suffix.
+			if got := urlSuffixForPartition(partitionForRegion(tt.region)); got != tt.wantURLSuffix {
+				t.Errorf("urlSuffixForPartition(partitionForRegion(%q)) = %q, want %q", tt.region, got, tt.wantURLSuffix)
 			}
 			if got := urlSuffixForPartition(tt.wantPartition); got != tt.wantURLSuffix {
 				t.Errorf("urlSuffixForPartition(%q) = %q, want %q", tt.wantPartition, got, tt.wantURLSuffix)

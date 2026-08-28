@@ -14,10 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	rtresource "github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
@@ -53,61 +51,12 @@ const (
 	testRegionName = "eu-west-1"
 )
 
-// pseudoParametersTestSchema returns the cfncompat_pseudo_parameters schema.
-func pseudoParametersTestSchema(t *testing.T) dsschema.Schema {
-	t.Helper()
-
-	d := &PseudoParametersDataSource{}
-	resp := &datasource.SchemaResponse{}
-	d.Schema(context.Background(), datasource.SchemaRequest{}, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics building schema: %v", resp.Diagnostics)
-	}
-	return resp.Schema
-}
-
-// dataSourceConfig builds a tfsdk.Config from a data source model.
-// tfsdk.Config is read-only, so the model is first written into a
-// tfsdk.State (which shares the same value encoding) and its raw value is
-// handed to the Config.
-func dataSourceConfig(t *testing.T, schema dsschema.Schema, model any) tfsdk.Config {
-	t.Helper()
-
-	state := tfsdk.State{Schema: schema}
-	diags := state.Set(context.Background(), model)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics setting config: %v", diags)
-	}
-	return tfsdk.Config{Schema: schema, Raw: state.Raw}
-}
-
-// dataSourceStateFromConfig returns the tfsdk.State the framework hands to a
-// data source's Read: fwserver seeds ReadResponse.State from the
-// configuration (so a Read that sets nothing echoes the config back), rather
-// than from a wholly null value.
-func dataSourceStateFromConfig(config tfsdk.Config) tfsdk.State {
-	return tfsdk.State{Schema: config.Schema, Raw: config.Raw.Copy()}
-}
-
 // readPseudoParameters runs the data source's Read with the given config
-// model and returns the resulting state model plus the diagnostics.
+// model and returns the resulting state model plus the response.
 func readPseudoParameters(t *testing.T, d *PseudoParametersDataSource, config PseudoParametersDataSourceModel) (PseudoParametersDataSourceModel, *datasource.ReadResponse) {
 	t.Helper()
 
-	ctx := context.Background()
-	schema := pseudoParametersTestSchema(t)
-
-	cfg := dataSourceConfig(t, schema, &config)
-	resp := &datasource.ReadResponse{State: dataSourceStateFromConfig(cfg)}
-	d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
-
-	var out PseudoParametersDataSourceModel
-	if !resp.Diagnostics.HasError() {
-		if diags := resp.State.Get(ctx, &out); diags.HasError() {
-			t.Fatalf("unexpected diagnostics reading state: %v", diags)
-		}
-	}
-	return out, resp
+	return readDataSource(t, d, config)
 }
 
 // newTestPseudoParametersDataSource builds a data source wired to a fake STS

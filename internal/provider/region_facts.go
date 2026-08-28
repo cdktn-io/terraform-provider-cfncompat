@@ -79,14 +79,3 @@ func urlSuffixForPartition(partition string) string {
 	}
 	return defaultURLSuffix
 }
-
-// urlSuffixForRegion returns the DNS suffix (CloudFormation's
-// AWS::URLSuffix) for the partition a region belongs to.
-func urlSuffixForRegion(region string) string {
-	for _, f := range regionFacts {
-		if strings.HasPrefix(region, f.prefix) {
-			return f.urlSuffix
-		}
-	}
-	return defaultURLSuffix
-}

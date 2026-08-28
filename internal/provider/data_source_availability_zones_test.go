@@ -17,7 +17,6 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	rtresource "github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	rtterraform "github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -300,39 +299,12 @@ func TestResolveAvailabilityZonesErrors(t *testing.T) {
 	})
 }
 
-// availabilityZonesTestSchema returns the cfncompat_availability_zones
-// schema.
-func availabilityZonesTestSchema(t *testing.T) dsschema.Schema {
-	t.Helper()
-
-	d := &AvailabilityZonesDataSource{}
-	resp := &datasource.SchemaResponse{}
-	d.Schema(context.Background(), datasource.SchemaRequest{}, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics building schema: %v", resp.Diagnostics)
-	}
-	return resp.Schema
-}
-
 // readAvailabilityZones runs the data source's Read with the given config
 // model and returns the resulting state model plus the response.
 func readAvailabilityZones(t *testing.T, d *AvailabilityZonesDataSource, config AvailabilityZonesDataSourceModel) (AvailabilityZonesDataSourceModel, *datasource.ReadResponse) {
 	t.Helper()
 
-	ctx := context.Background()
-	schema := availabilityZonesTestSchema(t)
-
-	cfg := dataSourceConfig(t, schema, &config)
-	resp := &datasource.ReadResponse{State: dataSourceStateFromConfig(cfg)}
-	d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
-
-	var out AvailabilityZonesDataSourceModel
-	if !resp.Diagnostics.HasError() {
-		if diags := resp.State.Get(ctx, &out); diags.HasError() {
-			t.Fatalf("unexpected diagnostics reading state: %v", diags)
-		}
-	}
-	return out, resp
+	return readDataSource(t, d, config)
 }
 
 // nullAvailabilityZonesConfig returns a config model with every attribute
