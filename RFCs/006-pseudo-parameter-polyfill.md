@@ -249,6 +249,25 @@ environment-agnostic and several L2 paths throw on a token region (`servicePrinc
 therefore prefer the provider's literal region as `AWS::Region` whenever one is configured and
 use `data.cfncompat_pseudo_parameters.*.region` only as the fallback.
 
+### Why `region_facts.go` exists although aws-cdk `region-info` has the same table
+
+The table is consulted at **apply** time inside the Go plugin process, where no TypeScript
+package is reachable. Consumers that have `region-info` (aws-cdk-lib, TerraConstructs, the
+synthesis backend) use it at synth time to emit literals when the region is literal, and reach
+for the data source only when the region is unknown until apply. `aws-sdk-go-v2` exports no
+partition metadata, which is why `hashicorp/aws` ships the same static table
+(`names/partition.go`). It is the only source for `AWS::URLSuffix`. Eight rows, kept in sync
+with `aws-entities.ts`.
+
+### `stack_id` interaction with `cfncompat_custom_resource`
+
+`cfncompat_custom_resource.stack_id` defaults to the shared sentinel `cfncompat/no-stack-id`.
+A `null` data-source `stack_id` (no `stack_name`) wired into it is not an error: the Plugin
+Framework applies the default to a null config value, so the sentinel is used. That is
+predictable but silent, so the resource emits a **warning** whenever `stack_id` is null in
+config; the warning is planned to become an error in v1.0 (the provider has no consumers yet).
+The resource example shows the intended wiring.
+
 ## 6. Testing
 
 - **Unit** (no AWS): STS/EC2 behind narrow interfaces with fakes (the RFC 005 pattern) —

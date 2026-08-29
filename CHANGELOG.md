@@ -15,6 +15,8 @@ DEPENDENCIES:
 
 NOTES:
 
+* `cfncompat_custom_resource` warns when `stack_id` is left at the shared `cfncompat/no-stack-id` default; wire it to `data.cfncompat_pseudo_parameters.<name>.stack_id`. The warning is planned to become an error in v1.0.
+
 * New `pseudo-parameters-e2e` job in the `workflow_dispatch`-only e2e GitHub workflow (`make -C integ pseudo-parameters`), gated on the same `run_aws` input and OIDC role as the custom-resource job; the fixture is read-only and creates no AWS resources
 * Acceptance tests that call real AWS are now opt-in on top of `TF_ACC=1` via a new `CFNCOMPAT_TEST_AWS=1` gate (`TestAccPseudoParametersDataSource`, `TestAccAvailabilityZonesDataSource`), so the credential-less CI acceptance matrix skips rather than fails them; `TestAccCustomResource` keeps its own `CFNCOMPAT_TEST_LAMBDA_ARN`/`CFNCOMPAT_TEST_RESPONSE_BUCKET` gate
 

@@ -31,11 +31,23 @@ type regionFact struct {
 // PARTITION_MAP (region-info/lib/aws-entities.ts), the table behind
 // RegionInfo.get(region).partition / .domainSuffix.
 //
-// No AWS API returns the DNS suffix, so a static table is the only source
-// for AWS::URLSuffix -- hashicorp/aws's aws_partition.dns_suffix is likewise
-// a static SDK table. The partition, in contrast, is only the fallback here:
-// the pseudo-parameters data source prefers the partition of the STS caller
-// ARN, which is authoritative.
+// Why this provider carries its own copy instead of reusing aws-cdk's
+// region-info package: the table is consulted at *apply* time, inside a Go
+// plugin process, where no TypeScript package is reachable -- the consumers
+// that do have region-info (aws-cdk-lib, TerraConstructs, the CDK Terrain
+// synthesis backend) use it at synth time to emit literals whenever the
+// region is literal (RFC 006 s5), and only reach for this data source when
+// the region is not known until apply. aws-sdk-go-v2 exports no public
+// partition metadata either (v1's endpoints.PartitionForRegion has no v2
+// equivalent), which is why hashicorp/aws ships the same kind of static
+// table (names/partition.go). It is the only source for AWS::URLSuffix -- no
+// AWS API returns the DNS suffix. Eight rows that change once every few
+// years; keep in sync with aws-entities.ts when AWS opens a partition.
+//
+// The pseudo-parameters data source derives AWS::Partition from the
+// configured region through this table (CloudFormation's own rule: the
+// partition of the region the stack is deployed in); the STS caller ARN's
+// partition is used only to warn on a mismatch.
 //
 // Entries are ordered longest-prefix-first so that lookup is unambiguous
 // even if a future prefix becomes a prefix of another one (today's prefixes

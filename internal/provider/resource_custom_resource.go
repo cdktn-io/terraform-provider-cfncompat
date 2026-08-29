@@ -209,7 +209,7 @@ func (r *CustomResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"`{StackId}-` and, on delete, removes exactly the notifications carrying that prefix, so " +
 					"two stacks sharing the sentinel would delete each other's notifications. Wire this to " +
 					"`data.cfncompat_pseudo_parameters.<name>.stack_id` with `stack_name` set (that value is " +
-					"deterministic and stable across applies); leaving it unset emits a warning.",
+					"deterministic and stable across applies); leaving it unset emits a warning today and is planned to become an error in v1.0.",
 			},
 			"service_timeout": schema.Int64Attribute{
 				Optional: true,
