@@ -146,6 +146,26 @@ under a fixed cfncompat namespace. It needs no state, no resource, and survives
 as the event's `StackId`; third-party handlers may parse it). Without `stack_name` there is no
 stack identity to derive, so `stack_id` is `null` rather than an invented value.
 
+### 2.3b `notification_arns`: echoed, not delivered
+
+`AWS::NotificationARNs` is the list of SNS topics CloudFormation's *engine* publishes every
+stack event to. The Terraform plugin protocol (tfplugin5/6) gives a provider RPCs only for its
+own resources (`PlanResourceChange`/`ApplyResourceChange`/…) — there is no "apply started/
+finished" RPC and no visibility into other providers' resources — so a cfncompat provider
+cannot deliver stack-wide events. The data source therefore only echoes the list (so templates
+that read the pseudo parameter still resolve). Delivering events belongs above the provider:
+
+- **CLI wrapper** (recommended, full fidelity today): the cdktn execution backend already owns the
+  `terraform`/`tofu` invocation; `apply -json` (OpenTofu: `-json-into=FILE`) streams per-resource
+  `apply_start/complete/errored`, `resource_drift`, `diagnostic` events that map 1:1 onto
+  CloudFormation stack events and can be published to `notification_arns`.
+- **Terraform 1.14 actions**: the synthesis backend generates the whole config and could inject a
+  `cfncompat` publish action with `lifecycle { action_trigger }` on every resource — in-band and
+  HCL-native, but `create`/`update` only (no destroy events yet).
+- Platform notifications (HCP Terraform, Spacelift, env0) are run-level only.
+
+No registry provider offers a `NotificationARNs` analog.
+
 ### 2.4 Partition / URL-suffix table
 
 Mirrored from aws-cdk `region-info/lib/aws-entities.ts:90-97` (the table behind
