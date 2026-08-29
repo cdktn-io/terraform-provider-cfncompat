@@ -59,7 +59,7 @@ Consequences the AWSCDK synthesis-backend implementation must account for:
    | Intrinsic | Disposition |
    |---|---|
    | `Ref` / `Fn::GetAtt` | Reference resolver (RFC 002 keystone, I1) — renders native TF interpolation |
-   | `Fn::GetAZs` | AWS API — map to an `aws_availability_zones`-style data source at synth time |
+   | `Fn::GetAZs` | AWS API — map to an `aws_availability_zones`-style data source at synth time — superseded by RFC 006 (`cfncompat_availability_zones` data source) |
    | `Fn::ImportValue` | CFN-only for v1 (RFC 002 §G5 cross-stack model) |
    | `Fn::Transform` | Clear synth-time error (RFC 002) |
    | `Fn::ForEach` | Template-language transform, expanded at synth time |

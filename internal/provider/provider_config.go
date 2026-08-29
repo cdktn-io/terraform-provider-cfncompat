@@ -74,6 +74,7 @@ type providerEndpointsModel struct {
 	SNS    types.String `tfsdk:"sns"`
 	S3     types.String `tfsdk:"s3"`
 	STS    types.String `tfsdk:"sts"`
+	EC2    types.String `tfsdk:"ec2"`
 }
 
 // EndpointsConfig holds resolved, optional per-service endpoint URL
@@ -84,6 +85,7 @@ type EndpointsConfig struct {
 	SNS    string
 	S3     string
 	STS    string
+	EC2    string
 }
 
 // toEndpointsConfig converts the (possibly nil) endpoints block into an
@@ -97,6 +99,7 @@ func (m *providerEndpointsModel) toEndpointsConfig() EndpointsConfig {
 		SNS:    m.SNS.ValueString(),
 		S3:     m.S3.ValueString(),
 		STS:    m.STS.ValueString(),
+		EC2:    m.EC2.ValueString(),
 	}
 }
 
@@ -120,7 +123,8 @@ type ProviderData struct {
 	// CustomResourceBucket is the default S3 bucket for custom-resource
 	// response transport; may be empty (resources fall back accordingly).
 	CustomResourceBucket string
-	// Endpoints holds lambda/sns/s3/sts endpoint URL overrides; may be zero.
+	// Endpoints holds lambda/sns/s3/sts/ec2 endpoint URL overrides; may be
+	// zero.
 	Endpoints EndpointsConfig
 }
 

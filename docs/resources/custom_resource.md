@@ -29,12 +29,23 @@ provider "cfncompat" {
   custom_resource_bucket = "my-cfncompat-responses"
 }
 
+# AWS::StackId for the request event. cfncompat_pseudo_parameters derives it
+# deterministically from partition, region, account id and stack_name, so
+# handlers that use StackId as an ownership key (CDK's S3 notifications
+# handler prefixes every notification Id with it) stay correct across applies.
+# Leaving stack_id unset falls back to the shared "cfncompat/no-stack-id"
+# sentinel and emits a warning.
+data "cfncompat_pseudo_parameters" "current" {
+  stack_name = "my-stack"
+}
+
 # Emulates a CloudFormation custom resource backed by a Lambda function,
 # equivalent to declaring an "AWS::CloudFormation::CustomResource" (or a
 # CDK AwsCustomResource / provider-framework-based custom resource) whose
 # ServiceToken points at the same function.
 resource "cfncompat_custom_resource" "example" {
   service_token = "arn:aws:lambda:us-east-1:123456789012:function:my-custom-resource-handler"
+  stack_id      = data.cfncompat_pseudo_parameters.current.stack_id
 
   resource_properties = {
     Message = "hello from cfncompat"
@@ -70,6 +81,8 @@ output "example_data" {
 - `response_key_prefix` (String) Optional S3 key prefix for the response object. The full key is `"<response_key_prefix>cfncompat/<RequestId>.json"` -- include a trailing `/` if you want the prefix to behave like a folder.
 - `service_timeout` (Number) Seconds to wait for the handler's response before failing, mirroring CloudFormation's `ServiceTimeout`. Must be between 1 and 3600 (CloudFormation's own range). Defaults to `3600`.
 - `stack_id` (String) CloudFormation-style stack identifier reported in the request event's `StackId` field, passed through verbatim. Typically set by a CDK Terrain synthesis backend to a stack identifier; defaults to `"cfncompat/no-stack-id"`.
+
+~> That default is a **shared sentinel**: every `cfncompat_custom_resource` in the workspace that leaves `stack_id` unset sends the same value. Handlers that treat `StackId` as an ownership key then cannot tell one stack's objects from another's -- CDK's S3 notifications handler, for instance, prefixes every notification `Id` with `{StackId}-` and, on delete, removes exactly the notifications carrying that prefix, so two stacks sharing the sentinel would delete each other's notifications. Wire this to `data.cfncompat_pseudo_parameters.<name>.stack_id` with `stack_name` set (that value is deterministic and stable across applies); leaving it unset emits a warning today and is planned to become an error in v1.0.
 
 ### Read-Only
 

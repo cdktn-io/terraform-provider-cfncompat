@@ -37,6 +37,7 @@ import (
 // state cannot be rebuilt from just a physical resource id.
 var _ resource.Resource = &CustomResource{}
 var _ resource.ResourceWithConfigure = &CustomResource{}
+var _ resource.ResourceWithValidateConfig = &CustomResource{}
 
 // NewCustomResource returns a new instance of the cfncompat_custom_resource
 // resource.
@@ -75,6 +76,48 @@ type CustomResourceModel struct {
 	Id                 types.String  `tfsdk:"id"`
 	PhysicalResourceId types.String  `tfsdk:"physical_resource_id"`
 	Data               types.Dynamic `tfsdk:"data"`
+}
+
+// ValidateConfig warns when stack_id is left unset. The schema default
+// (customResourceDefaultStackID) keeps existing state churn-free, but it is a
+// sentinel shared by every custom resource that omits the argument, which
+// silently defeats the ownership-key guarantee handlers rely on -- so the
+// omission is made loud rather than fatal.
+//
+// Only a *null* configured value warns: an unknown value (e.g. a stack_id
+// derived from a not-yet-applied resource) is a perfectly good wiring that
+// simply is not resolved yet.
+func (r *CustomResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var stackID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("stack_id"), &stackID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !stackID.IsNull() {
+		return
+	}
+
+	resp.Diagnostics.AddAttributeWarning(
+		path.Root("stack_id"),
+		"stack_id not set",
+		"stack_id is unset, so the request event's StackId field will be the shared sentinel "+
+			customResourceDefaultStackID+" -- the same value every cfncompat_custom_resource in this "+
+			"workspace that omits stack_id sends.\n\n"+
+			"Custom resource handlers commonly use StackId as an ownership key: CDK's S3 notifications "+
+			"handler prefixes every notification Id with \"{StackId}-\" and, on delete, removes exactly "+
+			"the notifications carrying that prefix. Two stacks sharing the sentinel would therefore "+
+			"claim and delete each other's objects.\n\n"+
+			"Recommended wiring:\n\n"+
+			"  data \"cfncompat_pseudo_parameters\" \"current\" {\n"+
+			"    stack_name = \"MyApp-Prod\"\n"+
+			"  }\n\n"+
+			"  resource \"cfncompat_custom_resource\" \"example\" {\n"+
+			"    stack_id = data.cfncompat_pseudo_parameters.current.stack_id\n"+
+			"    # ...\n"+
+			"  }\n\n"+
+			"stack_name must be set on that data source: without it stack_id is null, which lands right "+
+			"back on this sentinel.",
+	)
 }
 
 func (r *CustomResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -151,10 +194,22 @@ func (r *CustomResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed: true,
 				Default:  stringdefault.StaticString(customResourceDefaultStackID),
 				Description: "CloudFormation-style stack identifier reported in the request event's StackId " +
-					"field, passed through verbatim.",
+					"field, passed through verbatim. Defaults to the shared sentinel " +
+					"\"cfncompat/no-stack-id\", which every cfncompat_custom_resource that leaves this unset " +
+					"shares -- handlers that use StackId as an ownership key need a real per-stack value, so " +
+					"wire this to data.cfncompat_pseudo_parameters.<name>.stack_id with stack_name set. " +
+					"Leaving it unset emits a warning.",
 				MarkdownDescription: "CloudFormation-style stack identifier reported in the request event's " +
 					"`StackId` field, passed through verbatim. Typically set by a CDK Terrain synthesis backend " +
-					"to a stack identifier; defaults to `\"cfncompat/no-stack-id\"`.",
+					"to a stack identifier; defaults to `\"cfncompat/no-stack-id\"`.\n\n" +
+					"~> That default is a **shared sentinel**: every `cfncompat_custom_resource` in the " +
+					"workspace that leaves `stack_id` unset sends the same value. Handlers that treat " +
+					"`StackId` as an ownership key then cannot tell one stack's objects from another's -- " +
+					"CDK's S3 notifications handler, for instance, prefixes every notification `Id` with " +
+					"`{StackId}-` and, on delete, removes exactly the notifications carrying that prefix, so " +
+					"two stacks sharing the sentinel would delete each other's notifications. Wire this to " +
+					"`data.cfncompat_pseudo_parameters.<name>.stack_id` with `stack_name` set (that value is " +
+					"deterministic and stable across applies); leaving it unset emits a warning today and is planned to become an error in v1.0.",
 			},
 			"service_timeout": schema.Int64Attribute{
 				Optional: true,

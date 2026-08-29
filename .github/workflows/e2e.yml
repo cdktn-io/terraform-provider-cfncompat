@@ -8,7 +8,8 @@ on:
     inputs:
       run_aws:
         description: >-
-          Also run TestE2ECustomResource against real AWS (deploys an S3
+          Also run the AWS-backed e2e tests: TestE2EPseudoParameters
+          (read-only STS/EC2 calls) and TestE2ECustomResource (deploys an S3
           bucket, IAM role, and Lambda function). Requires the
           AWS_E2E_ROLE_ARN repository variable to be set to an IAM role ARN
           that trusts this repo's GitHub OIDC provider.
@@ -45,10 +46,45 @@ jobs:
         working-directory: integ
         run: go test -v -count 1 -timeout 15m -run '^TestE2EFunctions$' ./...
 
+  pseudo-parameters-e2e:
+    name: TestE2EPseudoParameters
+    if: ${{ inputs.run_aws }}
+    needs: functions-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Required by aws-actions/configure-aws-credentials to mint short-lived
+      # credentials via OIDC (no long-lived AWS secrets stored in GitHub).
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Run TestE2EPseudoParameters
+        working-directory: integ
+        env:
+          CFNCOMPAT_E2E_AWS: "1"
+        run: go test -v -count 1 -timeout 15m -run '^TestE2EPseudoParameters$' ./...
+
   custom-resource-e2e:
     name: TestE2ECustomResource
     if: ${{ inputs.run_aws }}
-    needs: functions-e2e
+    # Ordered after the read-only data-source suite: it exercises the same
+    # OIDC role and fails fast on a misconfigured one, before this job starts
+    # creating real AWS resources.
+    needs: pseudo-parameters-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

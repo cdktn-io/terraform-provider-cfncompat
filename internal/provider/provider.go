@@ -42,20 +42,28 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 	resp.Schema = schema.Schema{
 		Description: "The cfncompat provider exposes AWS CloudFormation intrinsic functions " +
 			"(Fn::Cidr, Fn::Join, Fn::Select, Fn::FindInMap, condition functions, and more) as Terraform " +
-			"provider-defined functions (provider::cfncompat::*), and a cfncompat_custom_resource resource " +
-			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, giving CDK " +
-			"Terrain's Terraform/OpenTofu synthesis backend faithful CloudFormation compatibility semantics. " +
-			"All configuration is optional: the provider-defined functions work with no AWS configuration at " +
-			"all, only cfncompat_custom_resource requires AWS credentials/region to be resolvable.",
+			"provider-defined functions (provider::cfncompat::*), a cfncompat_custom_resource resource " +
+			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, and two data " +
+			"sources for the values CloudFormation resolves at deploy time: cfncompat_pseudo_parameters " +
+			"(the AWS::* pseudo parameters) and cfncompat_availability_zones (Fn::GetAZs). Together they give " +
+			"CDK Terrain's Terraform/OpenTofu synthesis backend faithful CloudFormation compatibility " +
+			"semantics. All configuration is optional: the provider-defined functions work with no AWS " +
+			"configuration at all; cfncompat_custom_resource and both data sources require AWS " +
+			"credentials/region to be resolvable.",
 		MarkdownDescription: "The `cfncompat` provider exposes AWS CloudFormation intrinsic functions " +
 			"(`Fn::Cidr`, `Fn::Join`, `Fn::Select`, `Fn::FindInMap`, condition functions, and more) as Terraform " +
-			"provider-defined functions (`provider::cfncompat::*`), and a `cfncompat_custom_resource` resource " +
-			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, giving CDK " +
-			"Terrain's Terraform/OpenTofu synthesis backend faithful CloudFormation compatibility semantics.\n\n" +
+			"provider-defined functions (`provider::cfncompat::*`), a `cfncompat_custom_resource` resource " +
+			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, and two data " +
+			"sources for the values CloudFormation resolves at deploy time: " +
+			"`cfncompat_pseudo_parameters`, which resolves the `AWS::*` pseudo parameters (`AWS::AccountId`, " +
+			"`AWS::Partition`, `AWS::Region`, `AWS::URLSuffix`, `AWS::StackName`, `AWS::StackId`, " +
+			"`AWS::NotificationARNs`); and `cfncompat_availability_zones`, which implements `Fn::GetAZs`. " +
+			"Together they give CDK Terrain's Terraform/OpenTofu synthesis backend faithful CloudFormation " +
+			"compatibility semantics.\n\n" +
 			"All configuration below is optional: the provider-defined functions work with no AWS configuration " +
-			"at all (an empty `provider \"cfncompat\" {}` block is valid), only `cfncompat_custom_resource` " +
-			"requires AWS credentials/region to be resolvable, and it uses the same credential-resolution " +
-			"chain as the official `hashicorp/aws` provider.\n\n" +
+			"at all (an empty `provider \"cfncompat\" {}` block is valid). `cfncompat_custom_resource` and both " +
+			"data sources do require AWS credentials and a region to be resolvable, and use the same " +
+			"credential-resolution chain as the official `hashicorp/aws` provider.\n\n" +
 			"See [CDK Terrain](https://github.com/open-constructs/cdk-terrain) for the synthesis backend this provider supports.",
 		Attributes: map[string]schema.Attribute{
 			"access_key": schema.StringAttribute{
@@ -81,9 +89,10 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 			},
 			"region": schema.StringAttribute{
 				Optional: true,
-				Description: "The AWS region used by cfncompat_custom_resource API calls. Can also be sourced " +
-					"from the `AWS_REGION`/`AWS_DEFAULT_REGION` environment variables, a shared config file, or " +
-					"the EC2 Instance Metadata Service.",
+				Description: "The AWS region used by cfncompat_custom_resource API calls, and reported as " +
+					"CloudFormation's AWS::Region by the cfncompat_pseudo_parameters data source. Can also be " +
+					"sourced from the `AWS_REGION`/`AWS_DEFAULT_REGION` environment variables, a shared config " +
+					"file, or the EC2 Instance Metadata Service.",
 			},
 			"shared_config_files": schema.ListAttribute{
 				ElementType: types.StringType,
@@ -219,7 +228,8 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 			"endpoints": schema.SingleNestedAttribute{
 				Optional: true,
 				Description: "Service endpoint URL overrides, primarily for testing against LocalStack. " +
-					"Only used by cfncompat_custom_resource; the provider-defined functions make no AWS API calls.",
+					"Only used by cfncompat_custom_resource and the cfncompat data sources; the " +
+					"provider-defined functions make no AWS API calls.",
 				Attributes: map[string]schema.Attribute{
 					"lambda": schema.StringAttribute{
 						Optional:    true,
@@ -236,6 +246,14 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"sts": schema.StringAttribute{
 						Optional:    true,
 						Description: "Override the default STS service endpoint URL.",
+					},
+					"ec2": schema.StringAttribute{
+						Optional: true,
+						Description: "Override the default EC2 service endpoint URL, used by the " +
+							"cfncompat_availability_zones data source. The override applies to every region, " +
+							"including one named by an explicit `region` argument on " +
+							"cfncompat_availability_zones -- the request is still signed for that region, but " +
+							"always sent to this endpoint.",
 					},
 				},
 			},
@@ -300,7 +318,10 @@ func (p *CfncompatProvider) EphemeralResources(ctx context.Context) []func() eph
 
 // DataSources returns the data sources supported by this provider.
 func (p *CfncompatProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{
+		NewAvailabilityZonesDataSource,
+		NewPseudoParametersDataSource,
+	}
 }
 
 // Functions returns the provider-defined functions, each implementing the
