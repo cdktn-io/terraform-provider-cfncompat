@@ -242,20 +242,23 @@ func cfnParameterConstraintsFrom(ctx context.Context, allowedPattern types.Strin
 // List-shaped Parameter.
 func errSSMTypeIncompatible(name, actualType, wantShape, valueType string) error {
 	return fmt.Errorf(
-		"Types for SSM parameters [%s] defined in CFN template and SSM are incompatible: the parameter's "+
-			"Systems Manager type is %s, and `value_type = %q` is %s. CloudFormation compares the declared "+
-			"Systems Manager type against the template's shape and ignores the content, so a %s parameter "+
-			"cannot satisfy it however its value is punctuated",
-		name, actualType, valueType, wantShape, actualType)
+		"the Systems Manager parameter %s has type %s, and `value_type = %q` is %s. CloudFormation "+
+			"rejects that combination synchronously with \"Types for SSM parameters [%s] defined in CFN "+
+			"template and SSM are incompatible\": it compares the declared Systems Manager type against the "+
+			"template's shape and ignores the content, so a %s parameter cannot satisfy it however its value "+
+			"is punctuated",
+		name, actualType, valueType, wantShape, name, actualType)
 }
 
 // errSSMSecureThroughPlainSSM is CloudFormation's rejection of a plain
 // {{resolve:ssm:...}} reference against a SecureString (T8d).
 func errSSMSecureThroughPlainSSM(name string) error {
 	return fmt.Errorf(
-		"Non-secure ssm prefix was used for secure parameter %s. Read it through the "+
-			"cfncompat_ssm_secure_parameter_value data source, which marks `value` sensitive -- it is the "+
-			"polyfill for CloudFormation's {{resolve:ssm-secure:...}} dynamic reference", name)
+		"the Systems Manager parameter %s is a SecureString. CloudFormation rejects a plain "+
+			"{{resolve:ssm:...}} reference against one with \"Non-secure ssm prefix was used for secure "+
+			"parameter %s\". Read it through the cfncompat_ssm_secure_parameter_value data source, which "+
+			"marks `value` sensitive -- it is the polyfill for CloudFormation's {{resolve:ssm-secure:...}} "+
+			"dynamic reference", name, name)
 }
 
 // errSSMSecureAsTemplateParameter is CloudFormation's rejection of a
@@ -263,10 +266,11 @@ func errSSMSecureThroughPlainSSM(name string) error {
 // type (T3e).
 func errSSMSecureAsTemplateParameter(name string) error {
 	return fmt.Errorf(
-		"Parameters [%s] referenced by template have types not supported by CloudFormation: CloudFormation "+
-			"does not allow a SecureString behind an AWS::SSM::Parameter::Value<...> parameter type, which is "+
-			"what `value_type` selects. Read it through the cfncompat_ssm_secure_parameter_value data source, "+
-			"the polyfill for {{resolve:ssm-secure:...}}", name)
+		"the Systems Manager parameter %s is a SecureString, and setting `value_type` selects "+
+			"AWS::SSM::Parameter::Value<...> semantics. CloudFormation rejects that synchronously with "+
+			"\"Parameters [%s] referenced by template have types not supported by CloudFormation\". Read it "+
+			"through the cfncompat_ssm_secure_parameter_value data source, the polyfill for "+
+			"{{resolve:ssm-secure:...}}", name, name)
 }
 
 // --- hand-rolled validators -------------------------------------------------

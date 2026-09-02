@@ -430,7 +430,10 @@ func stringListForTest(values ...string) types.List {
 func TestSsmParameterValueDataSourceVersionLabelConflict(t *testing.T) {
 	t.Parallel()
 
-	d := NewSsmParameterValueDataSource().(*SsmParameterValueDataSource)
+	d, ok := NewSsmParameterValueDataSource().(*SsmParameterValueDataSource)
+	if !ok {
+		t.Fatal("NewSsmParameterValueDataSource did not return a *SsmParameterValueDataSource")
+	}
 	schema := dataSourceSchema(t, d)
 	conflicting := ssmParameterValueConfig("/a")
 	conflicting.Version = types.Int64Value(3)

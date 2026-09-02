@@ -360,9 +360,10 @@ func mapGetSecretValueError(secretID string, err error) error {
 	var invalidRequest *smtypes.InvalidRequestException
 	if errors.As(err, &invalidRequest) {
 		return fmt.Errorf(
-			"Secrets Manager rejected the request for %q as invalid (InvalidRequestException). This is what "+
-				"it returns for a secret that is scheduled for deletion, and when `version_stage` and "+
-				"`version_id` are both set but the stage is not attached to that version: %w", secretID, err)
+			"the request for the Secrets Manager secret %q was rejected as invalid "+
+				"(InvalidRequestException); that is what Secrets Manager returns for a secret scheduled for "+
+				"deletion, and when `version_stage` and `version_id` are both set but the stage is not "+
+				"attached to that version: %w", secretID, err)
 	}
 	return fmt.Errorf(
 		"calling Secrets Manager GetSecretValue for %q (requires the secretsmanager:GetSecretValue "+

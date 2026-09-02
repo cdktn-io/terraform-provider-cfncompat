@@ -263,7 +263,10 @@ func TestSsmParameterListValueDataSourceConstraintsArePerElement(t *testing.T) {
 func TestSsmParameterListValueDataSourceVersionLabelConflict(t *testing.T) {
 	t.Parallel()
 
-	d := NewSsmParameterListValueDataSource().(*SsmParameterListValueDataSource)
+	d, ok := NewSsmParameterListValueDataSource().(*SsmParameterListValueDataSource)
+	if !ok {
+		t.Fatal("NewSsmParameterListValueDataSource did not return a *SsmParameterListValueDataSource")
+	}
 	conflicting := ssmParameterListValueConfig("/a")
 	conflicting.Version = types.Int64Value(3)
 	conflicting.Label = types.StringValue("prod")
