@@ -75,6 +75,10 @@ type providerEndpointsModel struct {
 	S3     types.String `tfsdk:"s3"`
 	STS    types.String `tfsdk:"sts"`
 	EC2    types.String `tfsdk:"ec2"`
+
+	SSM            types.String `tfsdk:"ssm"`
+	SecretsManager types.String `tfsdk:"secretsmanager"`
+	Route53        types.String `tfsdk:"route53"`
 }
 
 // EndpointsConfig holds resolved, optional per-service endpoint URL
@@ -86,6 +90,10 @@ type EndpointsConfig struct {
 	S3     string
 	STS    string
 	EC2    string
+
+	SSM            string
+	SecretsManager string
+	Route53        string
 }
 
 // toEndpointsConfig converts the (possibly nil) endpoints block into an
@@ -100,6 +108,10 @@ func (m *providerEndpointsModel) toEndpointsConfig() EndpointsConfig {
 		S3:     m.S3.ValueString(),
 		STS:    m.STS.ValueString(),
 		EC2:    m.EC2.ValueString(),
+
+		SSM:            m.SSM.ValueString(),
+		SecretsManager: m.SecretsManager.ValueString(),
+		Route53:        m.Route53.ValueString(),
 	}
 }
 
