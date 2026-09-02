@@ -362,7 +362,7 @@ func (d *SsmParameterValueDataSource) Read(ctx context.Context, req datasource.R
 	default:
 		resp.Diagnostics.AddError(
 			"Unexpected Systems Manager Parameter Type",
-			errUnexpectedSSMType(parameter.Name, parameter.Type).Error(),
+			unexpectedSSMTypeDetail(parameter.Name, parameter.Type),
 		)
 		return
 	}

@@ -396,11 +396,11 @@ func ssmValidateFlag(validate types.Bool) bool {
 	return validate.ValueBool()
 }
 
-// errUnexpectedSSMType covers the Systems Manager parameter types a data
-// source has no branch for. GetParameter has only ever returned the three, so
-// reaching it means the SDK grew a fourth.
-func errUnexpectedSSMType(name, parameterType string) error {
-	return fmt.Errorf("the Systems Manager parameter %q has type %q, which this provider does not know how to "+
+// unexpectedSSMTypeDetail is the diagnostic for the Systems Manager parameter
+// types a data source has no branch for. GetParameter has only ever returned
+// the three, so reaching it means the SDK grew a fourth.
+func unexpectedSSMTypeDetail(name, parameterType string) string {
+	return fmt.Sprintf("the Systems Manager parameter %q has type %q, which this provider does not know how to "+
 		"resolve. This is a bug in the cfncompat provider; please report it.", name, parameterType)
 }
 
