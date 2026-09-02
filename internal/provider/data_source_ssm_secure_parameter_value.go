@@ -162,35 +162,16 @@ func (d *SsmSecureParameterValueDataSource) Schema(_ context.Context, _ datasour
 }
 
 func (d *SsmSecureParameterValueDataSource) ValidateConfig(ctx context.Context, req datasource.ValidateConfigRequest, resp *datasource.ValidateConfigResponse) {
-	var model SsmSecureParameterValueDataSourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if p, summary, detail, conflict := validateVersionLabelExclusive(model.Version, model.Label); conflict {
-		resp.Diagnostics.AddAttributeError(p, summary, detail)
-	}
+	validateVersionLabelExclusive(ctx, req.Config, &resp.Diagnostics)
 }
 
 func (d *SsmSecureParameterValueDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	pd, ok := req.ProviderData.(*ProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *provider.ProviderData, got: %T. This is a bug in the cfncompat provider; please report it.", req.ProviderData),
-		)
-		return
-	}
-
+	pd, ok := configuredProviderData(req, resp)
 	d.providerData = pd
-	if pd.ConfigErr != nil {
+	if !ok {
 		return
 	}
-	d.client = newSSMDataSourceClients(pd).SSM
+	d.client = newSSMClient(pd)
 }
 
 func (d *SsmSecureParameterValueDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -200,7 +181,7 @@ func (d *SsmSecureParameterValueDataSource) Read(ctx context.Context, req dataso
 		return
 	}
 
-	if !ssmDataSourceReady(d.providerData, "cfncompat_ssm_secure_parameter_value", "decrypt a Systems Manager parameter", &resp.Diagnostics) {
+	if !awsDataSourceReady(d.providerData, "cfncompat_ssm_secure_parameter_value", "decrypt a Systems Manager parameter", &resp.Diagnostics) {
 		return
 	}
 

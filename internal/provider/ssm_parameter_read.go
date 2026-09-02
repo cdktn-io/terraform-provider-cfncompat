@@ -17,15 +17,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 // Shared plumbing for the three cfncompat_ssm_* data sources: one narrow SSM
 // client interface, the GetParameter selector syntax, the CloudFormation-shaped
-// error mapping, and the CloudFormation Parameter constraints (AllowedPattern,
-// AllowedValues, MinLength, MaxLength).
+// error mapping, the hand-rolled schema validators, and the value constraints
+// (allowed_pattern, allowed_values).
 
 // SSM parameter type values, as returned by GetParameter.
 const (
@@ -146,24 +149,14 @@ func ssmListSplit(raw string) []string {
 }
 
 // cfnParameterConstraints holds the optional value constraints the non-secure
-// data sources apply to a resolved value. Both are optional; a zero value
-// applies no constraint.
+// data sources apply to a resolved value; a zero value applies none.
 //
-// These are shaped like a CloudFormation template Parameter's AllowedPattern
-// and AllowedValues, but they are deliberately a cfncompat **extension**, not
-// a polyfill. Live testing (RFCs/dynamic-ssm/live-test-results.md, T2) showed
-// that CloudFormation applies AllowedPattern/AllowedValues/MinLength/MaxLength
-// on an SSM-typed template Parameter to the raw parameter **name** string, not
-// to the resolved value: a pattern of "^hello-.*$" against a parameter whose
-// value is "hello-v2" is *rejected*, while "^/cfncompat.*$" -- which matches
-// the name -- is accepted. CloudFormation therefore has no custom-regex
-// validation of resolved SSM values at all, and a synthesis backend must not
-// map a CfnParameter's constraints onto these arguments: in CloudFormation
-// they constrain the literal name, which the backend holds at synth time and
-// can check itself.
-//
-// MinLength/MaxLength are not offered: with the CloudFormation analogy gone
-// they would be a bare length check on a string, which HCL can express itself.
+// Shaped like a CloudFormation template Parameter's AllowedPattern and
+// AllowedValues, but a cfncompat extension rather than a polyfill: those
+// constrain the parameter *name* (RFCs/dynamic-ssm/live-test-results.md, T2),
+// which a synthesis backend already holds at synth time. MinLength/MaxLength
+// are not offered because, with that analogy gone, they are a bare string
+// length check HCL can express itself.
 type cfnParameterConstraints struct {
 	AllowedPattern string
 	AllowedValues  []string
@@ -366,24 +359,75 @@ func (v int64AtLeastValidator) ValidateInt64(_ context.Context, req validator.In
 	}
 }
 
-// validateVersionLabelExclusive implements the version/label mutual exclusion
-// shared by the three SSM data sources. Systems Manager expresses both through
-// the same `name:selector` syntax, so only one can be sent.
-func validateVersionLabelExclusive(version types.Int64, label types.String) (diagPath path.Path, summary, detail string, conflict bool) {
+// validateVersionLabelExclusive is the whole ValidateConfig implementation of
+// the three SSM data sources. It reads `version` and `label` off the config
+// directly rather than through each data source's own model type, so the three
+// share one implementation.
+func validateVersionLabelExclusive(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) {
+	var version types.Int64
+	var label types.String
+	diags.Append(config.GetAttribute(ctx, path.Root("version"), &version)...)
+	diags.Append(config.GetAttribute(ctx, path.Root("label"), &label)...)
+	if diags.HasError() {
+		return
+	}
+
 	versionSet := !version.IsNull() && !version.IsUnknown()
 	labelSet := !label.IsNull() && !label.IsUnknown() && label.ValueString() != ""
 	if !versionSet || !labelSet {
-		return path.Empty(), "", "", false
+		return
 	}
-	return path.Root("label"),
+	diags.AddAttributeError(
+		path.Root("label"),
 		"Conflicting Arguments: version and label",
-		"`version` and `label` both select a specific version of a Systems Manager parameter, and " +
-			"Systems Manager expresses both through the same `name:selector` syntax, so only one may be " +
+		"`version` and `label` both select a specific version of a Systems Manager parameter, and "+
+			"Systems Manager expresses both through the same `name:selector` syntax, so only one may be "+
 			"set. Remove `version` to select by label, or `label` to select by version number.",
-		true
+	)
+}
+
+// ssmValidateFlag resolves the optional-and-computed `validate` argument,
+// which defaults to true: an unset AWS-specific value type is checked for
+// existence, as CloudFormation checks it.
+func ssmValidateFlag(validate types.Bool) bool {
+	if validate.IsNull() || validate.IsUnknown() {
+		return true
+	}
+	return validate.ValueBool()
+}
+
+// errUnexpectedSSMType covers the Systems Manager parameter types a data
+// source has no branch for. GetParameter has only ever returned the three, so
+// reaching it means the SDK grew a fourth.
+func errUnexpectedSSMType(name, parameterType string) error {
+	return fmt.Errorf("the Systems Manager parameter %q has type %q, which this provider does not know how to "+
+		"resolve. This is a bug in the cfncompat provider; please report it.", name, parameterType)
 }
 
 // --- client construction ----------------------------------------------------
+
+// configuredProviderData unwraps a data source Configure request. The returned
+// *ProviderData is kept even when ok is false, because Read reports an
+// unconfigured provider and a failed AWS configuration with its own diagnostic
+// (see ProviderData.ConfigErr); ok reports only whether AWS clients can be
+// built now.
+func configuredProviderData(req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) (*ProviderData, bool) {
+	// ProviderData is nil during validation-only requests, which happen
+	// before the provider is configured.
+	if req.ProviderData == nil {
+		return nil, false
+	}
+
+	pd, ok := req.ProviderData.(*ProviderData)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Data Source Configure Type",
+			fmt.Sprintf("Expected *provider.ProviderData, got: %T. This is a bug in the cfncompat provider; please report it.", req.ProviderData),
+		)
+		return nil, false
+	}
+	return pd, pd.ConfigErr == nil
+}
 
 // ssmDataSourceClients holds the AWS clients an SSM parameter data source
 // needs: always the SSM client, and -- for the AWS-specific value types --
@@ -400,13 +444,19 @@ type ssmDataSourceClients struct {
 // touches them.
 func newSSMDataSourceClients(pd *ProviderData) ssmDataSourceClients {
 	return ssmDataSourceClients{
-		SSM: ssm.NewFromConfig(pd.AwsConfig, func(o *ssm.Options) {
-			if pd.Endpoints.SSM != "" {
-				o.BaseEndpoint = aws.String(pd.Endpoints.SSM)
-			}
-		}),
+		SSM:       newSSMClient(pd),
 		Validator: newCFNTypeValidator(pd),
 	}
+}
+
+// newSSMClient builds the SSM client on its own, for the secure data source,
+// which has no value_type and so never runs an existence check.
+func newSSMClient(pd *ProviderData) ssmParameterGetter {
+	return ssm.NewFromConfig(pd.AwsConfig, func(o *ssm.Options) {
+		if pd.Endpoints.SSM != "" {
+			o.BaseEndpoint = aws.String(pd.Endpoints.SSM)
+		}
+	})
 }
 
 // newCFNTypeValidator builds the EC2 and Route 53 clients the AWS-specific
@@ -424,4 +474,45 @@ func newCFNTypeValidator(pd *ProviderData) *cfnTypeValidator {
 			}
 		}),
 	}
+}
+
+// ssmDataSourceID is the `id` every SSM data source reports: the resolved
+// parameter ARN, falling back to its name when the API returned no ARN.
+func ssmDataSourceID(p resolvedSSMParameter) string {
+	if p.ARN != "" {
+		return p.ARN
+	}
+	return p.Name
+}
+
+// awsDataSourceReady performs the two checks every cfncompat data source that
+// calls AWS makes at the top of Read: the provider was configured at all, and
+// its AWS configuration resolved. It reports whether Read may continue.
+func awsDataSourceReady(pd *ProviderData, dataSourceName, action string, diags interface{ AddError(string, string) }) bool {
+	if pd == nil {
+		diags.AddError(
+			dataSourceName+" Not Configured",
+			"the cfncompat provider was not configured, so "+dataSourceName+" cannot "+action+
+				". This is a bug in the cfncompat provider; please report it.",
+		)
+		return false
+	}
+	if pd.ConfigErr != nil {
+		diags.AddError(
+			"AWS Configuration Required",
+			dataSourceName+" requires resolvable AWS credentials/configuration to "+action+
+				", but the provider could not resolve its AWS configuration: "+pd.ConfigErr.Error(),
+		)
+		return false
+	}
+	return true
+}
+
+// markdownList renders values as a Markdown bullet list of inline code spans.
+func markdownList(values []string) string {
+	var b strings.Builder
+	for _, v := range values {
+		b.WriteString("- `" + v + "`\n")
+	}
+	return b.String()
 }

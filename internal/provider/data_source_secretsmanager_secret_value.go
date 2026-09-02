@@ -204,21 +204,9 @@ func (d *SecretsManagerSecretValueDataSource) Schema(_ context.Context, _ dataso
 }
 
 func (d *SecretsManagerSecretValueDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	pd, ok := req.ProviderData.(*ProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *provider.ProviderData, got: %T. This is a bug in the cfncompat provider; please report it.", req.ProviderData),
-		)
-		return
-	}
-
+	pd, ok := configuredProviderData(req, resp)
 	d.providerData = pd
-	if pd.ConfigErr != nil {
+	if !ok {
 		return
 	}
 
@@ -236,7 +224,7 @@ func (d *SecretsManagerSecretValueDataSource) Read(ctx context.Context, req data
 		return
 	}
 
-	if !ssmDataSourceReady(d.providerData, "cfncompat_secretsmanager_secret_value", "read a Secrets Manager secret", &resp.Diagnostics) {
+	if !awsDataSourceReady(d.providerData, "cfncompat_secretsmanager_secret_value", "read a Secrets Manager secret", &resp.Diagnostics) {
 		return
 	}
 	if d.client == nil {

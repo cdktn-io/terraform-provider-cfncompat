@@ -272,51 +272,16 @@ func (d *SsmParameterValueDataSource) Schema(_ context.Context, _ datasource.Sch
 	}
 }
 
-// markdownList renders values as a Markdown bullet list of inline code spans.
-func markdownList(values []string) string {
-	var b strings.Builder
-	for _, v := range values {
-		b.WriteString("- `" + v + "`\n")
-	}
-	return b.String()
-}
-
 func (d *SsmParameterValueDataSource) ValidateConfig(ctx context.Context, req datasource.ValidateConfigRequest, resp *datasource.ValidateConfigResponse) {
-	var model SsmParameterValueDataSourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if p, summary, detail, conflict := validateVersionLabelExclusive(model.Version, model.Label); conflict {
-		resp.Diagnostics.AddAttributeError(p, summary, detail)
-	}
+	validateVersionLabelExclusive(ctx, req.Config, &resp.Diagnostics)
 }
 
 func (d *SsmParameterValueDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	// ProviderData may be nil, e.g. during validation-only requests that
-	// occur before the provider has been configured.
-	if req.ProviderData == nil {
-		return
-	}
-
-	pd, ok := req.ProviderData.(*ProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *provider.ProviderData, got: %T. This is a bug in the cfncompat provider; please report it.", req.ProviderData),
-		)
-		return
-	}
-
+	pd, ok := configuredProviderData(req, resp)
 	d.providerData = pd
-
-	// A failed AWS configuration is surfaced by Read, not here, so that a
-	// configuration that never reads this data source keeps working with an
-	// unconfigured provider (see ProviderData.ConfigErr).
-	if pd.ConfigErr != nil {
+	if !ok {
 		return
 	}
-
 	d.clients = newSSMDataSourceClients(pd)
 }
 
@@ -327,7 +292,7 @@ func (d *SsmParameterValueDataSource) Read(ctx context.Context, req datasource.R
 		return
 	}
 
-	if !ssmDataSourceReady(d.providerData, "cfncompat_ssm_parameter_value", "read a Systems Manager parameter", &resp.Diagnostics) {
+	if !awsDataSourceReady(d.providerData, "cfncompat_ssm_parameter_value", "read a Systems Manager parameter", &resp.Diagnostics) {
 		return
 	}
 
@@ -351,10 +316,7 @@ func (d *SsmParameterValueDataSource) Read(ctx context.Context, req datasource.R
 		}
 	}
 
-	doValidate := true
-	if !model.Validate.IsNull() && !model.Validate.IsUnknown() {
-		doValidate = model.Validate.ValueBool()
-	}
+	doValidate := ssmValidateFlag(model.Validate)
 
 	constraints, err := cfnParameterConstraintsFrom(ctx, model.AllowedPattern, model.AllowedValues)
 	if err != nil {
@@ -400,8 +362,7 @@ func (d *SsmParameterValueDataSource) Read(ctx context.Context, req datasource.R
 	default:
 		resp.Diagnostics.AddError(
 			"Unexpected Systems Manager Parameter Type",
-			fmt.Sprintf("the Systems Manager parameter %q has type %q, which this provider does not know how to "+
-				"resolve. This is a bug in the cfncompat provider; please report it.", parameter.Name, parameter.Type),
+			errUnexpectedSSMType(parameter.Name, parameter.Type).Error(),
 		)
 		return
 	}
@@ -435,36 +396,4 @@ func (d *SsmParameterValueDataSource) Read(ctx context.Context, req datasource.R
 	model.Id = types.StringValue(ssmDataSourceID(parameter))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
-}
-
-// ssmDataSourceID is the `id` every SSM data source reports: the resolved
-// parameter ARN, falling back to its name when the API returned no ARN.
-func ssmDataSourceID(p resolvedSSMParameter) string {
-	if p.ARN != "" {
-		return p.ARN
-	}
-	return p.Name
-}
-
-// ssmDataSourceReady performs the two checks every cfncompat data source that
-// calls AWS makes at the top of Read: the provider was configured at all, and
-// its AWS configuration resolved. It reports whether Read may continue.
-func ssmDataSourceReady(pd *ProviderData, dataSourceName, action string, diags interface{ AddError(string, string) }) bool {
-	if pd == nil {
-		diags.AddError(
-			dataSourceName+" Not Configured",
-			"the cfncompat provider was not configured, so "+dataSourceName+" cannot "+action+
-				". This is a bug in the cfncompat provider; please report it.",
-		)
-		return false
-	}
-	if pd.ConfigErr != nil {
-		diags.AddError(
-			"AWS Configuration Required",
-			dataSourceName+" requires resolvable AWS credentials/configuration to "+action+
-				", but the provider could not resolve its AWS configuration: "+pd.ConfigErr.Error(),
-		)
-		return false
-	}
-	return true
 }

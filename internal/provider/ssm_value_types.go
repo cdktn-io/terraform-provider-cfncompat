@@ -346,192 +346,144 @@ func missingFrom(values []string, found map[string]bool) []string {
 	return missing
 }
 
-func existsAvailabilityZoneNames(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeAvailabilityZoneName)
-	}
-	out, err := v.EC2.DescribeAvailabilityZones(ctx, &ec2.DescribeAvailabilityZonesInput{ZoneNames: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeAvailabilityZoneName, "EC2 DescribeAvailabilityZones", "ec2:DescribeAvailabilityZones", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, az := range out.AvailabilityZones {
-			found[aws.ToString(az.ZoneName)] = true
+// ec2ExistenceCheck builds a cfnValueTypeSpec.exists from the one thing each
+// AWS-specific EC2 type does differently: which Describe* call answers "which
+// of these do you know about", and which field of the response carries the
+// identifier that was asked for. Everything around that -- the missing client
+// guard, the error wrapping, and comparing what came back against what was
+// asked for -- is identical for every type.
+func ec2ExistenceCheck(
+	typeName, api, permission string,
+	lookup func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error),
+) func(ctx context.Context, v *cfnTypeValidator, values []string) error {
+	return func(ctx context.Context, v *cfnTypeValidator, values []string) error {
+		if v.EC2 == nil {
+			return errNoEC2Client(typeName)
 		}
+		known, err := lookup(ctx, v.EC2, values)
+		if err != nil {
+			return describeCallError(typeName, api, permission, err)
+		}
+		found := make(map[string]bool, len(known))
+		for _, k := range known {
+			found[k] = true
+		}
+		if missing := missingFrom(values, found); len(missing) > 0 {
+			return missingValuesError(typeName, missing)
+		}
+		return nil
 	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeAvailabilityZoneName, missing)
-	}
-	return nil
 }
 
-func existsImageIDs(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeImageID)
+// idsOf maps an AWS API response slice to the identifiers it reports.
+func idsOf[T any](items []T, id func(T) string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, id(item))
 	}
-	out, err := v.EC2.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeImageID, "EC2 DescribeImages", "ec2:DescribeImages", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, img := range out.Images {
-			found[aws.ToString(img.ImageId)] = true
-		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeImageID, missing)
-	}
-	return nil
+	return out
 }
 
-func existsInstanceIDs(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeInstanceID)
-	}
-	out, err := v.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeInstanceID, "EC2 DescribeInstances", "ec2:DescribeInstances", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, reservation := range out.Reservations {
-			for _, instance := range reservation.Instances {
-				found[aws.ToString(instance.InstanceId)] = true
-			}
+var existsAvailabilityZoneNames = ec2ExistenceCheck(
+	cfnValueTypeAvailabilityZoneName, "EC2 DescribeAvailabilityZones", "ec2:DescribeAvailabilityZones",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeAvailabilityZones(ctx, &ec2.DescribeAvailabilityZonesInput{ZoneNames: values})
+		if err != nil || out == nil {
+			return nil, err
 		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeInstanceID, missing)
-	}
-	return nil
-}
-
-func existsKeyPairNames(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeKeyPairKeyName)
-	}
-	out, err := v.EC2.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{KeyNames: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeKeyPairKeyName, "EC2 DescribeKeyPairs", "ec2:DescribeKeyPairs", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, kp := range out.KeyPairs {
-			found[aws.ToString(kp.KeyName)] = true
-		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeKeyPairKeyName, missing)
-	}
-	return nil
-}
-
-func existsSecurityGroupIDs(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeSecurityGroupID)
-	}
-	out, err := v.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeSecurityGroupID, "EC2 DescribeSecurityGroups", "ec2:DescribeSecurityGroups", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, sg := range out.SecurityGroups {
-			found[aws.ToString(sg.GroupId)] = true
-		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeSecurityGroupID, missing)
-	}
-	return nil
-}
-
-func existsSecurityGroupNames(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeSecurityGroupGroupName)
-	}
-	// Security group names are not unique across VPCs, so they are looked up
-	// through the group-name filter rather than the GroupNames field (which
-	// is EC2-Classic/default-VPC only).
-	out, err := v.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-		Filters: []ec2types.Filter{{Name: aws.String("group-name"), Values: values}},
+		return idsOf(out.AvailabilityZones, func(az ec2types.AvailabilityZone) string { return aws.ToString(az.ZoneName) }), nil
 	})
-	if err != nil {
-		return describeCallError(cfnValueTypeSecurityGroupGroupName, "EC2 DescribeSecurityGroups", "ec2:DescribeSecurityGroups", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, sg := range out.SecurityGroups {
-			found[aws.ToString(sg.GroupName)] = true
-		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeSecurityGroupGroupName, missing)
-	}
-	return nil
-}
 
-func existsSubnetIDs(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeSubnetID)
-	}
-	out, err := v.EC2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeSubnetID, "EC2 DescribeSubnets", "ec2:DescribeSubnets", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, subnet := range out.Subnets {
-			found[aws.ToString(subnet.SubnetId)] = true
+var existsImageIDs = ec2ExistenceCheck(
+	cfnValueTypeImageID, "EC2 DescribeImages", "ec2:DescribeImages",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: values})
+		if err != nil || out == nil {
+			return nil, err
 		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeSubnetID, missing)
-	}
-	return nil
-}
+		return idsOf(out.Images, func(img ec2types.Image) string { return aws.ToString(img.ImageId) }), nil
+	})
 
-func existsVolumeIDs(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeVolumeID)
-	}
-	out, err := v.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeVolumeID, "EC2 DescribeVolumes", "ec2:DescribeVolumes", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, vol := range out.Volumes {
-			found[aws.ToString(vol.VolumeId)] = true
+var existsInstanceIDs = ec2ExistenceCheck(
+	cfnValueTypeInstanceID, "EC2 DescribeInstances", "ec2:DescribeInstances",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: values})
+		if err != nil || out == nil {
+			return nil, err
 		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeVolumeID, missing)
-	}
-	return nil
-}
+		// DescribeInstances nests instances one level deeper than every other
+		// Describe* call, under the reservation that launched them.
+		var ids []string
+		for _, reservation := range out.Reservations {
+			ids = append(ids, idsOf(reservation.Instances, func(i ec2types.Instance) string { return aws.ToString(i.InstanceId) })...)
+		}
+		return ids, nil
+	})
 
-func existsVPCIDs(ctx context.Context, v *cfnTypeValidator, values []string) error {
-	if v.EC2 == nil {
-		return errNoEC2Client(cfnValueTypeVPCID)
-	}
-	out, err := v.EC2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: values})
-	if err != nil {
-		return describeCallError(cfnValueTypeVPCID, "EC2 DescribeVpcs", "ec2:DescribeVpcs", err)
-	}
-	found := map[string]bool{}
-	if out != nil {
-		for _, vpc := range out.Vpcs {
-			found[aws.ToString(vpc.VpcId)] = true
+var existsKeyPairNames = ec2ExistenceCheck(
+	cfnValueTypeKeyPairKeyName, "EC2 DescribeKeyPairs", "ec2:DescribeKeyPairs",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{KeyNames: values})
+		if err != nil || out == nil {
+			return nil, err
 		}
-	}
-	if missing := missingFrom(values, found); len(missing) > 0 {
-		return missingValuesError(cfnValueTypeVPCID, missing)
-	}
-	return nil
-}
+		return idsOf(out.KeyPairs, func(kp ec2types.KeyPairInfo) string { return aws.ToString(kp.KeyName) }), nil
+	})
+
+var existsSecurityGroupIDs = ec2ExistenceCheck(
+	cfnValueTypeSecurityGroupID, "EC2 DescribeSecurityGroups", "ec2:DescribeSecurityGroups",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: values})
+		if err != nil || out == nil {
+			return nil, err
+		}
+		return idsOf(out.SecurityGroups, func(sg ec2types.SecurityGroup) string { return aws.ToString(sg.GroupId) }), nil
+	})
+
+var existsSecurityGroupNames = ec2ExistenceCheck(
+	cfnValueTypeSecurityGroupGroupName, "EC2 DescribeSecurityGroups", "ec2:DescribeSecurityGroups",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		// Security group names are not unique across VPCs, so they are looked
+		// up through the group-name filter rather than the GroupNames field
+		// (which is EC2-Classic/default-VPC only).
+		out, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+			Filters: []ec2types.Filter{{Name: aws.String("group-name"), Values: values}},
+		})
+		if err != nil || out == nil {
+			return nil, err
+		}
+		return idsOf(out.SecurityGroups, func(sg ec2types.SecurityGroup) string { return aws.ToString(sg.GroupName) }), nil
+	})
+
+var existsSubnetIDs = ec2ExistenceCheck(
+	cfnValueTypeSubnetID, "EC2 DescribeSubnets", "ec2:DescribeSubnets",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: values})
+		if err != nil || out == nil {
+			return nil, err
+		}
+		return idsOf(out.Subnets, func(s ec2types.Subnet) string { return aws.ToString(s.SubnetId) }), nil
+	})
+
+var existsVolumeIDs = ec2ExistenceCheck(
+	cfnValueTypeVolumeID, "EC2 DescribeVolumes", "ec2:DescribeVolumes",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: values})
+		if err != nil || out == nil {
+			return nil, err
+		}
+		return idsOf(out.Volumes, func(v ec2types.Volume) string { return aws.ToString(v.VolumeId) }), nil
+	})
+
+var existsVPCIDs = ec2ExistenceCheck(
+	cfnValueTypeVPCID, "EC2 DescribeVpcs", "ec2:DescribeVpcs",
+	func(ctx context.Context, client cfnEC2ValidationAPI, values []string) ([]string, error) {
+		out, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: values})
+		if err != nil || out == nil {
+			return nil, err
+		}
+		return idsOf(out.Vpcs, func(v ec2types.Vpc) string { return aws.ToString(v.VpcId) }), nil
+	})
 
 // existsHostedZoneIDs checks each hosted zone id with its own GetHostedZone
 // call: Route 53 has no batch "describe these zones" API, so unlike the EC2
@@ -564,8 +516,8 @@ func existsHostedZoneIDs(ctx context.Context, v *cfnTypeValidator, values []stri
 
 // isRoute53NoSuchHostedZone reports whether err is Route 53's
 // NoSuchHostedZone, i.e. "the zone does not exist" rather than "the call
-// failed". Matched on the error string as well as the typed error so that a
-// fake client in tests can report it without constructing SDK internals.
+// failed". Matched on the error string rather than errors.As so that a fake
+// client in tests can report it without constructing SDK internals.
 func isRoute53NoSuchHostedZone(err error) bool {
 	if err == nil {
 		return false

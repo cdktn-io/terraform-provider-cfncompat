@@ -221,32 +221,13 @@ func (d *SsmParameterListValueDataSource) Schema(_ context.Context, _ datasource
 }
 
 func (d *SsmParameterListValueDataSource) ValidateConfig(ctx context.Context, req datasource.ValidateConfigRequest, resp *datasource.ValidateConfigResponse) {
-	var model SsmParameterListValueDataSourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if p, summary, detail, conflict := validateVersionLabelExclusive(model.Version, model.Label); conflict {
-		resp.Diagnostics.AddAttributeError(p, summary, detail)
-	}
+	validateVersionLabelExclusive(ctx, req.Config, &resp.Diagnostics)
 }
 
 func (d *SsmParameterListValueDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	pd, ok := req.ProviderData.(*ProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *provider.ProviderData, got: %T. This is a bug in the cfncompat provider; please report it.", req.ProviderData),
-		)
-		return
-	}
-
+	pd, ok := configuredProviderData(req, resp)
 	d.providerData = pd
-	if pd.ConfigErr != nil {
+	if !ok {
 		return
 	}
 	d.clients = newSSMDataSourceClients(pd)
@@ -259,7 +240,7 @@ func (d *SsmParameterListValueDataSource) Read(ctx context.Context, req datasour
 		return
 	}
 
-	if !ssmDataSourceReady(d.providerData, "cfncompat_ssm_parameter_list_value", "read a Systems Manager parameter", &resp.Diagnostics) {
+	if !awsDataSourceReady(d.providerData, "cfncompat_ssm_parameter_list_value", "read a Systems Manager parameter", &resp.Diagnostics) {
 		return
 	}
 
@@ -277,10 +258,7 @@ func (d *SsmParameterListValueDataSource) Read(ctx context.Context, req datasour
 		return
 	}
 
-	doValidate := true
-	if !model.Validate.IsNull() && !model.Validate.IsUnknown() {
-		doValidate = model.Validate.ValueBool()
-	}
+	doValidate := ssmValidateFlag(model.Validate)
 
 	constraints, err := cfnParameterConstraintsFrom(ctx, model.AllowedPattern, model.AllowedValues)
 	if err != nil {
@@ -325,8 +303,7 @@ func (d *SsmParameterListValueDataSource) Read(ctx context.Context, req datasour
 	default:
 		resp.Diagnostics.AddError(
 			"Unexpected Systems Manager Parameter Type",
-			fmt.Sprintf("the Systems Manager parameter %q has type %q, which this provider does not know how to "+
-				"resolve. This is a bug in the cfncompat provider; please report it.", parameter.Name, parameter.Type),
+			errUnexpectedSSMType(parameter.Name, parameter.Type).Error(),
 		)
 		return
 	}
