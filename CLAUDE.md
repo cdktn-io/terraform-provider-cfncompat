@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - CloudFormation **intrinsic functions** (`Fn::Cidr`, `Fn::Join`, `Fn::Select`, `Fn::FindInMap`, `Fn::Base64`) → exposed as **provider-defined functions** (`provider::cfncompat::*`).
 - CloudFormation **deployment-model capabilities** (`CustomResource` with pre-signed S3 URLs and Lambda-backed lifecycle polling) → exposed as **resources** (`cfncompat_*`).
-- CloudFormation **environment values** (`AWS::*` pseudo parameters, `Fn::GetAZs`) → exposed as **data sources** (`cfncompat_pseudo_parameters`, `cfncompat_availability_zones`), since they need AWS API access and so cannot be provider-defined functions.
+- CloudFormation **environment values** (`AWS::*` pseudo parameters, `Fn::GetAZs`) and **deploy-time reads** (`AWS::SSM::Parameter::Value<...>`, the three `{{resolve:...}}` dynamic references) → exposed as **data sources** (`cfncompat_pseudo_parameters`, `cfncompat_availability_zones`, `cfncompat_ssm_parameter_value`, `cfncompat_ssm_parameter_list_value`, `cfncompat_ssm_secure_parameter_value`, `cfncompat_secretsmanager_secret_value`), since they need AWS API access and so cannot be provider-defined functions.
 
-Status: early development, but every RFC'd surface is implemented. `internal/provider/provider.go` registers the `cfncompat_custom_resource` resource, the `cfncompat_pseudo_parameters` and `cfncompat_availability_zones` data sources, and all 17 `provider::cfncompat::*` intrinsic functions. `EphemeralResources()` and `Actions()` still return `nil`, and nothing is stubbed out or half-wired.
+Status: early development, but every RFC'd surface is implemented. `internal/provider/provider.go` registers the `cfncompat_custom_resource` resource, six data sources (`cfncompat_pseudo_parameters`, `cfncompat_availability_zones`, and the four dynamic-reference ones), and 19 `provider::cfncompat::*` functions — the 17 intrinsics plus `parse_dynamic_reference`/`is_dynamic_reference`. `EphemeralResources()` and `Actions()` still return `nil`, and nothing is stubbed out or half-wired.
 
 Repo lives at `github.com/cdktn-io/terraform-provider-cfncompat`. The public Terraform Registry namespace for a provider always matches the GitHub account/org that owns the repo (there's no way to decouple them), so this publishes as `registry.terraform.io/cdktn-io/cfncompat` — the `cdktn` HCP Terraform organization manages that `cdktn-io` public namespace, but does not rename it.
 
@@ -38,7 +38,9 @@ make testacc     # TF_ACC=1 go test -v -cover -timeout 120m ./...   (acceptance 
 Acceptance tests that call **real AWS** are opt-in on top of `TF_ACC`, so that CI (which runs the acceptance suite with `TF_ACC=1` and no credentials) skips them:
 
 ```shell
-CFNCOMPAT_TEST_AWS=1                # cfncompat_pseudo_parameters + cfncompat_availability_zones (read-only: STS/EC2)
+CFNCOMPAT_TEST_AWS=1                # read-only data sources: pseudo_parameters, availability_zones, ssm_parameter_value/_list_value (STS/EC2/SSM)
+CFNCOMPAT_TEST_SSM_SECURE_NAME=...  # TestAccSsmSecureParameterValueDataSource: an existing SecureString parameter
+CFNCOMPAT_TEST_SECRET_ID=...        # TestAccSecretsManagerSecretValueDataSource: an existing JSON secret with a "password" key
 CFNCOMPAT_TEST_LAMBDA_ARN=...       # TestAccCustomResource: a deployed CFN custom-resource handler
 CFNCOMPAT_TEST_RESPONSE_BUCKET=...  # TestAccCustomResource: the bucket its pre-signed ResponseURL points at
 ```

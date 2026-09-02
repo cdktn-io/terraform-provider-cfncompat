@@ -6,11 +6,11 @@ A [Terraform](https://www.terraform.io) provider built on the [Terraform Plugin 
 
 CDK Terrain synthesizes CloudFormation-authored constructs into Terraform/OpenTofu configurations. While most CloudFormation resource types have direct Terraform equivalents, CloudFormation's **intrinsic functions** (e.g., `Fn::Cidr`, `Fn::Join`, `Fn::Select`, `Fn::FindInMap`, `Fn::Base64`) and **deployment-model capabilities** (e.g., `CustomResource` with pre-signed S3 URLs and Lambda-backed lifecycle polling) have no native Terraform counterpart.
 
-The `cfncompat` provider fills this gap by exposing CloudFormation intrinsic functions as **Terraform provider-defined functions** (`provider::cfncompat::*`), deployment-model capabilities as **Terraform resources** (`cfncompat_*`), and the environment values that need an AWS API call (seven of the eight `AWS::*` pseudo parameters, `Fn::GetAZs`) as **Terraform data sources**, enabling CDK Terrain to faithfully translate CloudFormation templates without semantic loss.
+The `cfncompat` provider fills this gap by exposing CloudFormation intrinsic functions as **Terraform provider-defined functions** (`provider::cfncompat::*`), deployment-model capabilities as **Terraform resources** (`cfncompat_*`), and the values that need an AWS API call at deploy time (seven of the eight `AWS::*` pseudo parameters, `Fn::GetAZs`, and the SSM Parameter Store / Secrets Manager reads behind `AWS::SSM::Parameter::Value<...>` and the `{{resolve:...}}` dynamic references) as **Terraform data sources**, enabling CDK Terrain to faithfully translate CloudFormation templates without semantic loss.
 
 ## Status
 
-🚧 **Early development** — all pure-computable CloudFormation intrinsic functions are implemented as provider-defined functions, the CloudFormation custom-resource protocol is implemented as the `cfncompat_custom_resource` resource, and seven of the eight `AWS::*` pseudo parameters plus `Fn::GetAZs` are implemented as data sources (the eighth, `AWS::NoValue`, is bridge-side — see below).
+🚧 **Early development** — all pure-computable CloudFormation intrinsic functions are implemented as provider-defined functions, the CloudFormation custom-resource protocol is implemented as the `cfncompat_custom_resource` resource, and seven of the eight `AWS::*` pseudo parameters, `Fn::GetAZs`, and every CloudFormation dynamic-reference mechanism (`AWS::SSM::Parameter::Value<...>`, `{{resolve:ssm}}`, `{{resolve:ssm-secure}}`, `{{resolve:secretsmanager}}`) are implemented as data sources (the eighth pseudo parameter, `AWS::NoValue`, is bridge-side — see below).
 
 ### Resources (implemented)
 
@@ -28,8 +28,14 @@ Provider AWS configuration follows the terraform-provider-awscc schema (static c
 |---|---|---|
 | Pseudo parameters | `data "cfncompat_pseudo_parameters"` | `AWS::AccountId`, `AWS::Partition`, `AWS::Region`, `AWS::URLSuffix`, `AWS::StackName`, `AWS::StackId`, `AWS::NotificationARNs` |
 | Availability zones | `data "cfncompat_availability_zones"` | `Fn::GetAZs` |
+| SSM parameter (scalar) | `data "cfncompat_ssm_parameter_value"` | `{{resolve:ssm:...}}` (`value_type` unset) / `AWS::SSM::Parameter::Value<String>`, `<AWS-specific type>` (`value_type` set) |
+| SSM parameter (list) | `data "cfncompat_ssm_parameter_list_value"` | `AWS::SSM::Parameter::Value<List<String>>`, `<CommaDelimitedList>`, `<List<AWS-specific type>>` |
+| SSM secure string | `data "cfncompat_ssm_secure_parameter_value"` | `{{resolve:ssm-secure:...}}` |
+| Secrets Manager secret | `data "cfncompat_secretsmanager_secret_value"` | `{{resolve:secretsmanager:...}}` |
 
 `cfncompat_pseudo_parameters` is aws-cdk-lib's [`Aws`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/pseudo-parameter-reference.html) accessor class as a single data source: one node per stack, one STS `GetCallerIdentity` call, seven of the eight `AWS::*` pseudo parameters (all but `AWS::NoValue`, which is bridge-side). `stack_name` and `notification_arns` are echoed inputs; `stack_id` is a deterministic CloudFormation stack ARN derived from `(partition, region, account_id, stack_name)`, so custom-resource handlers that use it as an ownership key stay correct across applies. `cfncompat_availability_zones` is [`Fn::GetAZs`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/intrinsic-function-reference-getavailabilityzones.html), including the documented EC2-VPC default-subnet behaviour, and adds an `endpoints.ec2` provider override for LocalStack-style runs; it needs the permissions CloudFormation documents for `Fn::GetAZs` — `ec2:DescribeAvailabilityZones` and `ec2:DescribeAccountAttributes`, plus `ec2:DescribeSubnets` for EC2-VPC. Both need AWS credentials and create nothing. See [`RFCs/006-pseudo-parameter-polyfill.md`](RFCs/006-pseudo-parameter-polyfill.md) for the design.
+
+The four dynamic-reference data sources cover every way CloudFormation reads a value out of Systems Manager Parameter Store or Secrets Manager at deploy time, including the parts nothing in `hashicorp/aws` reproduces: CloudFormation's strict Systems Manager type matching, and its validation of a resolved value against the declared inner type (`AWS::EC2::Image::Id` and the nine other AWS-specific types are checked to *exist* in the account and region, not merely to look right — `validate = false` opts out). Sensitivity is static per data source, so a non-secret value is **not** marked sensitive and does not poison the attributes it flows into, while the two secret-reading data sources always are — and warn, on every read, that Terraform stores the value in state in plaintext where CloudFormation never does. `provider::cfncompat::parse_dynamic_reference` and `is_dynamic_reference` split a `{{resolve:...}}` string whose text is only known at plan time. The semantics were verified against 36 real CloudFormation stacks; see [`RFCs/007-dynamic-reference-polyfill.md`](RFCs/007-dynamic-reference-polyfill.md) for the design and [`RFCs/dynamic-ssm/live-test-results.md`](RFCs/dynamic-ssm/live-test-results.md) for the evidence.
 
 ### Provider Functions (implemented)
 
@@ -40,6 +46,8 @@ Every CloudFormation intrinsic function that is a pure computation (no AWS API a
 | `provider::cfncompat::base64(...)` | `Fn::Base64` | `Fn.base64` |
 | `provider::cfncompat::cidr(...)` | `Fn::Cidr` | `Fn.cidr` |
 | `provider::cfncompat::find_in_map(...)` | `Fn::FindInMap` | `Fn.findInMap` |
+| `provider::cfncompat::is_dynamic_reference(...)` | *(no CFN equivalent)* — is this string one whole `{{resolve:...}}` reference? | — |
+| `provider::cfncompat::parse_dynamic_reference(...)` | *(no CFN equivalent)* — splits a `{{resolve:...}}` reference into its parts | — |
 | `provider::cfncompat::join(...)` | `Fn::Join` | `Fn.join` |
 | `provider::cfncompat::length(...)` | `Fn::Length` (LanguageExtensions) | `Fn.len` |
 | `provider::cfncompat::select(...)` | `Fn::Select` | `Fn.select` |
@@ -121,8 +129,13 @@ make generate
 Acceptance tests additionally need `TF_ACC=1` and a real `terraform` binary. Those that call **real AWS** are opt-in on top of it, so a credential-less CI run skips rather than fails them:
 
 ```shell
-# The two data sources — read-only STS GetCallerIdentity / EC2 Describe* calls
-TF_ACC=1 CFNCOMPAT_TEST_AWS=1 go test -run 'TestAcc(PseudoParameters|AvailabilityZones)' ./internal/provider/
+# The read-only data sources — STS GetCallerIdentity / EC2 Describe* / SSM GetParameter calls
+TF_ACC=1 CFNCOMPAT_TEST_AWS=1 go test -run 'TestAcc(PseudoParameters|AvailabilityZones|SsmParameter)' ./internal/provider/
+
+# The two secret-reading data sources need a fixture you create and delete yourself
+TF_ACC=1 CFNCOMPAT_TEST_AWS=1 CFNCOMPAT_TEST_SSM_SECURE_NAME=/cfncompat/acctest/secure \
+  CFNCOMPAT_TEST_SECRET_ID=cfncompat-acctest/db \
+  go test -run 'TestAcc(SsmSecureParameterValue|SecretsManagerSecretValue)' ./internal/provider/
 
 # The custom-resource protocol — needs a deployed handler and its response bucket
 TF_ACC=1 CFNCOMPAT_TEST_LAMBDA_ARN=arn:aws:lambda:... CFNCOMPAT_TEST_RESPONSE_BUCKET=my-bucket \
