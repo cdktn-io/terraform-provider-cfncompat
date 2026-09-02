@@ -38,7 +38,7 @@ func TestProviderSchemaEndpoints(t *testing.T) {
 		t.Fatalf("endpoints is %T, want a SingleNestedAttribute", resp.Schema.Attributes["endpoints"])
 	}
 
-	want := []string{"lambda", "sns", "s3", "sts", "ec2"}
+	want := []string{"lambda", "sns", "s3", "sts", "ec2", "ssm", "secretsmanager", "route53"}
 	if got := len(endpoints.Attributes); got != len(want) {
 		t.Errorf("endpoints has %d attributes, want %d: %v", got, len(want), endpoints.Attributes)
 	}

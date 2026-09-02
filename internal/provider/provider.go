@@ -43,9 +43,11 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 		Description: "The cfncompat provider exposes AWS CloudFormation intrinsic functions " +
 			"(Fn::Cidr, Fn::Join, Fn::Select, Fn::FindInMap, condition functions, and more) as Terraform " +
 			"provider-defined functions (provider::cfncompat::*), a cfncompat_custom_resource resource " +
-			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, and two data " +
+			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, and data " +
 			"sources for the values CloudFormation resolves at deploy time: cfncompat_pseudo_parameters " +
-			"(the AWS::* pseudo parameters) and cfncompat_availability_zones (Fn::GetAZs). Together they give " +
+			"(the AWS::* pseudo parameters), cfncompat_availability_zones (Fn::GetAZs), and the SSM " +
+			"Parameter Store and Secrets Manager reads behind AWS::SSM::Parameter::Value<...> and the " +
+			"{{resolve:...}} dynamic references. Together they give " +
 			"CDK Terrain's Terraform/OpenTofu synthesis backend faithful CloudFormation compatibility " +
 			"semantics. All configuration is optional: the provider-defined functions work with no AWS " +
 			"configuration at all; cfncompat_custom_resource and both data sources require AWS " +
@@ -53,16 +55,20 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 		MarkdownDescription: "The `cfncompat` provider exposes AWS CloudFormation intrinsic functions " +
 			"(`Fn::Cidr`, `Fn::Join`, `Fn::Select`, `Fn::FindInMap`, condition functions, and more) as Terraform " +
 			"provider-defined functions (`provider::cfncompat::*`), a `cfncompat_custom_resource` resource " +
-			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, and two data " +
+			"that faithfully emulates the CloudFormation Custom Resource deployment protocol, and data " +
 			"sources for the values CloudFormation resolves at deploy time: " +
 			"`cfncompat_pseudo_parameters`, which resolves the `AWS::*` pseudo parameters (`AWS::AccountId`, " +
 			"`AWS::Partition`, `AWS::Region`, `AWS::URLSuffix`, `AWS::StackName`, `AWS::StackId`, " +
-			"`AWS::NotificationARNs`); and `cfncompat_availability_zones`, which implements `Fn::GetAZs`. " +
+			"`AWS::NotificationARNs`); `cfncompat_availability_zones`, which implements `Fn::GetAZs`; and " +
+			"`cfncompat_ssm_parameter_value`, `cfncompat_ssm_parameter_list_value`, " +
+			"`cfncompat_ssm_secure_parameter_value` and `cfncompat_secretsmanager_secret_value`, which " +
+			"implement `AWS::SSM::Parameter::Value<...>` and the `{{resolve:ssm}}` / `{{resolve:ssm-secure}}` " +
+			"/ `{{resolve:secretsmanager}}` dynamic references. " +
 			"Together they give CDK Terrain's Terraform/OpenTofu synthesis backend faithful CloudFormation " +
 			"compatibility semantics.\n\n" +
 			"All configuration below is optional: the provider-defined functions work with no AWS configuration " +
-			"at all (an empty `provider \"cfncompat\" {}` block is valid). `cfncompat_custom_resource` and both " +
-			"data sources do require AWS credentials and a region to be resolvable, and use the same " +
+			"at all (an empty `provider \"cfncompat\" {}` block is valid). `cfncompat_custom_resource` and every " +
+			"data source do require AWS credentials and a region to be resolvable, and use the same " +
 			"credential-resolution chain as the official `hashicorp/aws` provider.\n\n" +
 			"See [CDK Terrain](https://github.com/open-constructs/cdk-terrain) for the synthesis backend this provider supports.",
 		Attributes: map[string]schema.Attribute{
@@ -255,6 +261,22 @@ func (p *CfncompatProvider) Schema(ctx context.Context, req provider.SchemaReque
 							"cfncompat_availability_zones -- the request is still signed for that region, but " +
 							"always sent to this endpoint.",
 					},
+					"ssm": schema.StringAttribute{
+						Optional: true,
+						Description: "Override the default Systems Manager (SSM) service endpoint URL, used by the " +
+							"cfncompat_ssm_parameter_value, cfncompat_ssm_parameter_list_value and " +
+							"cfncompat_ssm_secure_parameter_value data sources.",
+					},
+					"secretsmanager": schema.StringAttribute{
+						Optional: true,
+						Description: "Override the default Secrets Manager service endpoint URL, used by the " +
+							"cfncompat_secretsmanager_secret_value data source.",
+					},
+					"route53": schema.StringAttribute{
+						Optional: true,
+						Description: "Override the default Route 53 service endpoint URL, used only by the " +
+							"AWS::Route53::HostedZone::Id existence check of the SSM parameter data sources.",
+					},
 				},
 			},
 		},
@@ -321,6 +343,10 @@ func (p *CfncompatProvider) DataSources(ctx context.Context) []func() datasource
 	return []func() datasource.DataSource{
 		NewAvailabilityZonesDataSource,
 		NewPseudoParametersDataSource,
+		NewSecretsManagerSecretValueDataSource,
+		NewSsmParameterListValueDataSource,
+		NewSsmParameterValueDataSource,
+		NewSsmSecureParameterValueDataSource,
 	}
 }
 
@@ -339,8 +365,10 @@ func (p *CfncompatProvider) Functions(ctx context.Context) []func() function.Fun
 		NewConditionNotFunction,
 		NewConditionOrFunction,
 		NewFindInMapFunction,
+		NewIsDynamicReferenceFunction,
 		NewJoinFunction,
 		NewLengthFunction,
+		NewParseDynamicReferenceFunction,
 		NewSelectFunction,
 		NewSplitFunction,
 		NewSubFunction,

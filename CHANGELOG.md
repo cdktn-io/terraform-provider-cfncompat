@@ -1,6 +1,29 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## Unreleased (0.4.0)
+
+FEATURES:
+
+* **New Data Source:** `cfncompat_ssm_parameter_value` — a scalar Systems Manager Parameter Store read with the two resolution paths CloudFormation actually has: with `value_type` unset it is `{{resolve:ssm:name[:version]}}` (accepts `String` and `StringList`, returns the raw untrimmed stored string), and with `value_type` set it is `AWS::SSM::Parameter::Value<T>` (strict `String`-only type match plus validation of the resolved value against the CloudFormation inner type). `value` is deliberately **not** sensitive, unlike `hashicorp/aws`'s `aws_ssm_parameter`, matching CloudFormation's own `DescribeStacks` `ResolvedValue`
+* **New Data Source:** `cfncompat_ssm_parameter_list_value` — `AWS::SSM::Parameter::Value<List<String>>` / `<CommaDelimitedList>` / `<List<AWS-specific type>>` as a real `list(string)`, split on commas with each member whitespace-trimmed as CloudFormation's typed list resolution does; `raw_value` keeps the stored string verbatim. Accepts only `StringList` parameters, mirroring CloudFormation's strict declared-type check
+* **New Data Source:** `cfncompat_ssm_secure_parameter_value` — `{{resolve:ssm-secure:...}}`, with `value` marked sensitive and a per-read warning that Terraform stores the decrypted value in state in plaintext where CloudFormation stores only the literal reference (`suppress_state_warning` silences it)
+* **New Data Source:** `cfncompat_secretsmanager_secret_value` — `{{resolve:secretsmanager:secret-id:SecretString:json-key:version-stage:version-id}}`, whole `SecretString` or one JSON key, with the same sensitivity and state warning
+* **New Functions:** `provider::cfncompat::parse_dynamic_reference` splits a single `{{resolve:...}}` string into a fixed-shape object (`service`, `name`, `version`, `secret_string`, `json_key`, `version_stage`, `version_id`), ARN-shaped Secrets Manager ids included, for the case where the reference text is not known until plan time; `provider::cfncompat::is_dynamic_reference` is its total predicate
+* **Validation:** the ten CloudFormation AWS-specific parameter types (`AWS::EC2::Image::Id`, `Instance::Id`, `Subnet::Id`, `VPC::Id`, `Volume::Id`, `SecurityGroup::Id`/`GroupName`, `KeyPair::KeyName`, `AvailabilityZone::Name`, `AWS::Route53::HostedZone::Id`) and their nine `List<...>` forms are checked both syntactically and — as CloudFormation does — for **existence** in the account and region, batched into one API call per list; `validate = false` keeps only the syntactic check
+* **Provider Configuration:** new `endpoints.ssm`, `endpoints.secretsmanager` and `endpoints.route53` overrides, alongside the existing `lambda`/`sns`/`s3`/`sts`/`ec2` ones
+
+DEPENDENCIES:
+
+* New direct dependencies `aws-sdk-go-v2/service/ssm`, `aws-sdk-go-v2/service/secretsmanager` and `aws-sdk-go-v2/service/route53`. Measured binary impact on darwin/arm64: +7.14 MiB (ssm), +3.00 MiB (route53, for the single `AWS::Route53::HostedZone::Id` existence check), +1.07 MiB (secretsmanager); the six new EC2 operations are free because `service/ec2` was already linked for `Fn::GetAZs`. Total +14.95%
+
+NOTES:
+
+* `RFCs/007-dynamic-reference-polyfill.md` records the design; `RFCs/dynamic-ssm/live-test-results.md` records the 36 real CloudFormation stacks its semantics were verified against, and `RFCs/dynamic-ssm/design-ssm-cfn-mechanics.md` / `design-ssm-tf-typing.md` the supporting research
+* Two behaviours diverge from CloudFormation deliberately, and are documented as such. `allowed_pattern`/`allowed_values` apply to the **resolved value**, whereas CloudFormation's `AllowedPattern`/`AllowedValues` on an SSM-typed template `Parameter` validate the parameter *name* — a synthesis backend must not map `CfnParameter` constraints onto them. `label` is a cfncompat extension: CloudFormation supports Systems Manager labels nowhere
+* `cfncompat_secretsmanager_secret_value` re-reads on every plan, so a secret rotation produces a diff; CloudFormation re-resolves a `secretsmanager` reference only when the consuming resource is independently being updated. Pin `version_id`, or use `lifecycle { ignore_changes }` on the consumer. The SSM paths have no such divergence — CloudFormation re-resolves those on every stack operation
+* Acceptance tests for the two secret-reading data sources are gated on `CFNCOMPAT_TEST_SSM_SECURE_NAME` / `CFNCOMPAT_TEST_SECRET_ID` on top of `CFNCOMPAT_TEST_AWS=1`, since they need a fixture the operator creates and deletes
+
 ## 0.3.0 (August 29, 2026)
 
 FEATURES:
